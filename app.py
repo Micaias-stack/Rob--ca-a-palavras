@@ -1,8 +1,10 @@
+import base64
+import io
 import json
 import re
 import urllib.request
-import google.generativeai as genai
 import pandas as pd
+import requests
 from PIL import Image
 import streamlit as st
 
@@ -27,6 +29,7 @@ with st.sidebar:
     if not api_key and "GEMINI_API_KEY" in st.secrets:
         api_key = st.secrets["GEMINI_API_KEY"]
 
+
 # ==========================================
 # MOTOR DICIONÁRIO PT-BR (CACHE)
 # ==========================================
@@ -35,22 +38,23 @@ def carregar_dicionario_pt():
     url = "https://raw.githubusercontent.com/pythonprobr/palavras/master/palavras.txt"
     try:
         resposta = urllib.request.urlopen(url)
-        palavras_raw = resposta.read().decode('utf-8').splitlines()
-        
+        palavras_raw = resposta.read().decode("utf-8").splitlines()
+
         dicionario = set()
         prefixos = set()
-        
+
         for p in palavras_raw:
             p = p.upper().strip()
-            if len(p) >= 3 and not '-' in p and not '.' in p:
+            if len(p) >= 3 and "-" not in p and "." not in p:
                 dicionario.add(p)
                 for i in range(1, len(p) + 1):
                     prefixos.add(p[:i])
-                    
+
         return dicionario, prefixos
     except Exception as e:
         st.error(f"Erro ao baixar dicionário: {str(e)}")
         return set(), set()
+
 
 # ==========================================
 # MOTOR DE BUSCA ZIGUE-ZAGUE (DFS)
@@ -58,24 +62,37 @@ def carregar_dicionario_pt():
 def buscar_palavras_boggle(matriz, dicionario, prefixos):
     linhas = len(matriz)
     colunas = len(matriz[0]) if linhas > 0 else 0
-    palavras_encontradas = {} 
+    palavras_encontradas = {}
 
     def dfs(r, c, visitados, palavra_atual, caminho):
         letra_celula = str(matriz[r][c]).upper().strip()
         nova_palavra = palavra_atual + letra_celula
-        
+
         if nova_palavra not in prefixos:
             return
-            
+
         if nova_palavra in dicionario and len(nova_palavra) >= 3:
             if nova_palavra not in palavras_encontradas:
                 palavras_encontradas[nova_palavra] = list(caminho)
 
-        direcoes = [(-1,-1), (-1,0), (-1,1), (0,-1), (0,1), (1,-1), (1,0), (1,1)]
-        
+        direcoes = [
+            (-1, -1),
+            (-1, 0),
+            (-1, 1),
+            (0, -1),
+            (0, 1),
+            (1, -1),
+            (1, 0),
+            (1, 1),
+        ]
+
         for dr, dc in direcoes:
             nr, nc = r + dr, c + dc
-            if 0 <= nr < linhas and 0 <= nc < colunas and (nr, nc) not in visitados:
+            if (
+                0 <= nr < linhas
+                and 0 <= nc < colunas
+                and (nr, nc) not in visitados
+            ):
                 visitados.add((nr, nc))
                 dfs(nr, nc, visitados, nova_palavra, caminho + [(nr, nc)])
                 visitados.remove((nr, nc))
@@ -86,16 +103,54 @@ def buscar_palavras_boggle(matriz, dicionario, prefixos):
 
     return palavras_encontradas
 
+
 # ==========================================
-# EXTRAÇÃO VIA IA COM MODELOS OFICIAIS
+# CONVERSOR DE IMAGEM PARA BASE64
+# ==========================================
+def imagem_para_base64(imagem):
+    buffered = io.BytesIO()
+    imagem.convert("RGB").save(buffered, format="JPEG")
+    return base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+
+# ==========================================
+# EXTRAÇÃO VIA REST API DIRETA (À PROVA DE 404)
 # ==========================================
 def extrair_matriz_imagem(imagem, api_key):
-    genai.configure(api_key=api_key)
-    
-    modelos_para_testar = ["gemini-1.5-flash", "gemini-1.5-pro"]
-    
-    response = None
-    ultimo_erro = None
+    # 1. Consulta quais modelos estão liberados para a sua chave
+    models_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    res_models = requests.get(models_url)
+
+    if res_models.status_code != 200:
+        raise ValueError(
+            f"Erro de autenticação na API (Código {res_models.status_code}): {res_models.text}"
+        )
+
+    models_data = res_models.json()
+    modelos_disponiveis = [
+        m["name"]
+        for m in models_data.get("models", [])
+        if "generateContent" in m.get("supportedGenerationMethods", [])
+    ]
+
+    if not modelos_disponiveis:
+        raise ValueError(
+            "Nenhum modelo compatível foi encontrado para esta API Key."
+        )
+
+    # Escolhe o modelo ativo
+    modelo_escolhido = modelos_disponiveis[0]
+    for pref in [
+        "models/gemini-1.5-flash",
+        "models/gemini-1.5-pro",
+        "models/gemini-2.0-flash",
+    ]:
+        if pref in modelos_disponiveis:
+            modelo_escolhido = pref
+            break
+
+    # 2. Prepara e envia a requisição HTTP com a imagem
+    img_b64 = imagem_para_base64(imagem)
 
     prompt = """
     Analise esta imagem de um jogo de palavras (Boggle).
@@ -113,25 +168,46 @@ def extrair_matriz_imagem(imagem, api_key):
     Não inclua markdown extra, apenas o JSON puro.
     """
 
-    for nome_modelo in modelos_para_testar:
-        try:
-            model = genai.GenerativeModel(nome_modelo)
-            response = model.generate_content([prompt, imagem])
-            if response and response.text:
-                break
-        except Exception as e:
-            ultimo_erro = e
-            continue
+    generate_url = f"https://generativelanguage.googleapis.com/v1beta/{modelo_escolhido}:generateContent?key={api_key}"
 
-    if not response or not response.text:
-        raise ValueError(f"Não foi possível conectar à API do Gemini: {ultimo_erro}")
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt},
+                    {
+                        "inline_data": {
+                            "mime_type": "image/jpeg",
+                            "data": img_b64,
+                        }
+                    },
+                ]
+            }
+        ]
+    }
 
-    match_json = re.search(r"\{.*\}", response.text, re.DOTALL)
+    response = requests.post(generate_url, json=payload)
+    if response.status_code != 200:
+        raise ValueError(
+            f"Erro na requisição ({response.status_code}): {response.text}"
+        )
+
+    data = response.json()
+
+    try:
+        texto_resposta = data["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError):
+        raise ValueError(f"Resposta inesperada da API: {json.dumps(data)}")
+
+    match_json = re.search(r"\{.*\}", texto_resposta, re.DOTALL)
     if match_json:
         dados = json.loads(match_json.group())
         return dados["matriz"]
     else:
-        raise ValueError("Falha ao ler o JSON da IA. Resposta recebida: " + response.text)
+        raise ValueError(
+            "Falha ao ler o JSON da IA. Resposta recebida: " + texto_resposta
+        )
+
 
 # ==========================================
 # FLUXO PRINCIPAL
@@ -157,25 +233,33 @@ if uploaded_file and dicionario:
             st.warning("Insira sua Gemini API Key na barra lateral.")
         else:
             if st.button("🚀 Destruir no Boggle", type="primary"):
-                with st.spinner("Analisando imagem com Gemini..."):
+                with st.spinner("Conectando via REST API e lendo a grade..."):
                     try:
                         matriz = extrair_matriz_imagem(imagem, api_key)
                         st.success("Grade identificada!")
-                        
+
                         df_grid = pd.DataFrame(matriz)
                         st.dataframe(df_grid, use_container_width=True)
 
-                        with st.spinner("Procurando combinações no dicionário..."):
-                            resultados = buscar_palavras_boggle(matriz, dicionario, prefixos)
-                        
+                        with st.spinner(
+                            "Procurando combinações no dicionário..."
+                        ):
+                            resultados = buscar_palavras_boggle(
+                                matriz, dicionario, prefixos
+                            )
+
                         if resultados:
                             palavras_ordenadas = sorted(
-                                resultados.keys(), key=lambda x: len(x), reverse=True
+                                resultados.keys(),
+                                key=lambda x: len(x),
+                                reverse=True,
                             )
-                            
-                            st.subheader(f"🔥 {len(palavras_ordenadas)} Palavras Encontradas!")
+
+                            st.subheader(
+                                f"🔥 {len(palavras_ordenadas)} Palavras Encontradas!"
+                            )
                             st.caption("As maiores palavras (mais pontos):")
-                            
+
                             for p in palavras_ordenadas[:50]:
                                 st.markdown(f"- **{p}** ({len(p)} letras)")
                         else:
