@@ -87,34 +87,15 @@ def buscar_palavras_boggle(matriz, dicionario, prefixos):
     return palavras_encontradas
 
 # ==========================================
-# EXTRAÇÃO AUTOMÁTICA DE MODELO (À PROVA DE ERRO 404)
+# EXTRAÇÃO VIA IA COM MODELOS OFICIAIS
 # ==========================================
-def obter_modelo_disponivel(api_key):
+def extrair_matriz_imagem(imagem, api_key):
     genai.configure(api_key=api_key)
     
-    # Busca dinamicamente os modelos aceitos para a sua chave
-    modelos_disponiveis = []
-    try:
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                modelos_disponiveis.append(m.name)
-    except Exception:
-        pass
-
-    # Escolhe o melhor modelo disponível
-    for modelo_pref in ["models/gemini-2.5-flash", "models/gemini-2.0-flash", "models/gemini-1.5-flash", "gemini-1.5-flash"]:
-        if modelo_pref in modelos_disponiveis:
-            return modelo_pref
-            
-    # Se não achar pelos nomes padrão, pega o primeiro que suporta texto e imagem
-    if modelos_disponiveis:
-        return modelos_disponiveis[0]
-        
-    return "gemini-2.5-flash" # Fallback final
-
-def extrair_matriz_imagem(imagem, api_key):
-    nome_modelo = obter_modelo_disponivel(api_key)
-    model = genai.GenerativeModel(nome_modelo)
+    modelos_para_testar = ["gemini-1.5-flash", "gemini-1.5-pro"]
+    
+    response = None
+    ultimo_erro = None
 
     prompt = """
     Analise esta imagem de um jogo de palavras (Boggle).
@@ -132,7 +113,19 @@ def extrair_matriz_imagem(imagem, api_key):
     Não inclua markdown extra, apenas o JSON puro.
     """
 
-    response = model.generate_content([prompt, imagem])
+    for nome_modelo in modelos_para_testar:
+        try:
+            model = genai.GenerativeModel(nome_modelo)
+            response = model.generate_content([prompt, imagem])
+            if response and response.text:
+                break
+        except Exception as e:
+            ultimo_erro = e
+            continue
+
+    if not response or not response.text:
+        raise ValueError(f"Não foi possível conectar à API do Gemini: {ultimo_erro}")
+
     match_json = re.search(r"\{.*\}", response.text, re.DOTALL)
     if match_json:
         dados = json.loads(match_json.group())
@@ -164,7 +157,7 @@ if uploaded_file and dicionario:
             st.warning("Insira sua Gemini API Key na barra lateral.")
         else:
             if st.button("🚀 Destruir no Boggle", type="primary"):
-                with st.spinner("Descobrindo modelo e extraindo matriz..."):
+                with st.spinner("Analisando imagem com Gemini..."):
                     try:
                         matriz = extrair_matriz_imagem(imagem, api_key)
                         st.success("Grade identificada!")
