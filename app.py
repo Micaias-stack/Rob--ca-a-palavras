@@ -105,7 +105,7 @@ def imagem_para_base64_otimizada(imagem):
 
 
 # ==========================================
-# EXTRAÇÃO VIA REST API (COM RETENTATIVA E MODELO CORRETO)
+# EXTRAÇÃO VIA REST API (CORRIGIDO)
 # ==========================================
 def extrair_matriz_imagem(imagem, api_key):
     models_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
@@ -119,10 +119,12 @@ def extrair_matriz_imagem(imagem, api_key):
     modelos_disponiveis = [
         m["name"]
         for m in models_data.get("models", [])
-        if "generateContent" in m.get("supportedGenerationMethods", []) and "vision" in m.get("inputTokenLimit", {})
+        # --- CORREÇÃO APLICADA AQUI ---
+        # A verificação 'and "vision" in...' foi removida porque era a causa do erro.
+        # Os modelos modernos usam `generateContent` para texto e imagem.
+        if "generateContent" in m.get("supportedGenerationMethods", [])
     ]
 
-    # --- LÓGICA DE SELEÇÃO DE MODELO ATUALIZADA ---
     preferencias = [
         "models/gemini-1.5-flash-latest",
         "models/gemini-1.5-flash"
@@ -131,9 +133,8 @@ def extrair_matriz_imagem(imagem, api_key):
 
     if not modelo_escolhido:
         raise ValueError(
-            f"❌ Nenhum modelo de imagem compatível (como gemini-1.5-flash) foi encontrado para sua API Key. Verifique as permissões da chave. Modelos de visão disponíveis: {modelos_disponiveis}"
+            f"❌ Nenhum modelo de imagem compatível (como gemini-1.5-flash) foi encontrado para sua API Key. Verifique as permissões da chave e o billing. Modelos disponíveis: {modelos_disponiveis}"
         )
-    # --- FIM DA LÓGICA DE SELEÇÃO ---
     st.info(f"Usando o modelo de IA: `{modelo_escolhido}`")
 
     img_b64 = imagem_para_base64_otimizada(imagem)
@@ -206,13 +207,13 @@ if uploaded_file and dicionario:
                     try:
                         matriz = extrair_matriz_imagem(imagem, api_key)
                         st.success("Grade identificada!")
-
+                        
                         df_grid = pd.DataFrame(matriz)
                         st.dataframe(df_grid, use_container_width=True)
                         
-                        # (O resto da sua lógica para encontrar palavras vai aqui)
+                        # ... continue com a lógica de buscar palavras etc.
                         
                     except ValueError as e:
-                        st.error(f"Erro no processamento: {e}")
+                        st.error(f"Ocorreu um erro: {e}")
                     except Exception as e:
                         st.error(f"Ocorreu um erro inesperado: {e}")
