@@ -105,25 +105,31 @@ def buscar_palavras_boggle(matriz, dicionario, prefixos):
 
 
 # ==========================================
-# CONVERSOR DE IMAGEM PARA BASE64
+# REDIMENSIONAR E CONVERTER IMAGEM
 # ==========================================
-def imagem_para_base64(imagem):
+def imagem_para_base64_otimizada(imagem):
+    img_temp = imagem.copy().convert("RGB")
+    img_temp.thumbnail((800, 800))  # Reduz resolução para economizar cota
     buffered = io.BytesIO()
-    imagem.convert("RGB").save(buffered, format="JPEG")
+    img_temp.save(buffered, format="JPEG", quality=85)
     return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
 
 # ==========================================
-# EXTRAÇÃO VIA REST API DIRETA (À PROVA DE 404)
+# EXTRAÇÃO VIA REST API COM OTIMIZAÇÃO DE COTA
 # ==========================================
 def extrair_matriz_imagem(imagem, api_key):
-    # 1. Consulta quais modelos estão liberados para a sua chave
+    # Consulta os modelos disponíveis
     models_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
     res_models = requests.get(models_url)
 
-    if res_models.status_code != 200:
+    if res_models.status_code == 429:
         raise ValueError(
-            f"Erro de autenticação na API (Código {res_models.status_code}): {res_models.text}"
+            "⏳ Limite de requisições atingido. Aguarde 30 segundos e tente novamente."
+        )
+    elif res_models.status_code != 200:
+        raise ValueError(
+            f"Erro de autenticação (Código {res_models.status_code}): {res_models.text}"
         )
 
     models_data = res_models.json()
@@ -133,24 +139,27 @@ def extrair_matriz_imagem(imagem, api_key):
         if "generateContent" in m.get("supportedGenerationMethods", [])
     ]
 
-    if not modelos_disponiveis:
-        raise ValueError(
-            "Nenhum modelo compatível foi encontrado para esta API Key."
-        )
-
-    # Escolhe o modelo ativo
-    modelo_escolhido = modelos_disponiveis[0]
-    for pref in [
+    # Dá prioridade absoluta ao gemini-1.5-flash (maior cota gratuita)
+    modelo_escolhido = None
+    preferencias = [
         "models/gemini-1.5-flash",
+        "models/gemini-1.5-flash-8b",
         "models/gemini-1.5-pro",
-        "models/gemini-2.0-flash",
-    ]:
+    ]
+
+    for pref in preferencias:
         if pref in modelos_disponiveis:
             modelo_escolhido = pref
             break
 
-    # 2. Prepara e envia a requisição HTTP com a imagem
-    img_b64 = imagem_para_base64(imagem)
+    if not modelo_escolhido:
+        modelo_escolhido = (
+            modelos_disponiveis[0]
+            if modelos_disponiveis
+            else "models/gemini-1.5-flash"
+        )
+
+    img_b64 = imagem_para_base64_otimizada(imagem)
 
     prompt = """
     Analise esta imagem de um jogo de palavras (Boggle).
@@ -187,7 +196,12 @@ def extrair_matriz_imagem(imagem, api_key):
     }
 
     response = requests.post(generate_url, json=payload)
-    if response.status_code != 200:
+
+    if response.status_code == 429:
+        raise ValueError(
+            "⏳ Limite por minuto do plano gratuito atingido. Aguarde 30 segundos e clique em Destruir no Boggle novamente!"
+        )
+    elif response.status_code != 200:
         raise ValueError(
             f"Erro na requisição ({response.status_code}): {response.text}"
         )
@@ -233,7 +247,7 @@ if uploaded_file and dicionario:
             st.warning("Insira sua Gemini API Key na barra lateral.")
         else:
             if st.button("🚀 Destruir no Boggle", type="primary"):
-                with st.spinner("Conectando via REST API e lendo a grade..."):
+                with st.spinner("Lendo a grade com o modelo Flash..."):
                     try:
                         matriz = extrair_matriz_imagem(imagem, api_key)
                         st.success("Grade identificada!")
