@@ -109,23 +109,23 @@ def buscar_palavras_boggle(matriz, dicionario, prefixos):
 # ==========================================
 def imagem_para_base64_otimizada(imagem):
     img_temp = imagem.copy().convert("RGB")
-    img_temp.thumbnail((800, 800))  # Reduz resolução para economizar cota
+    img_temp.thumbnail((800, 800))  # Reduz resolução para economizar cota de tokens
     buffered = io.BytesIO()
     img_temp.save(buffered, format="JPEG", quality=85)
     return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
 
 # ==========================================
-# EXTRAÇÃO VIA REST API COM OTIMIZAÇÃO DE COTA
+# EXTRAÇÃO VIA REST API COM MODELO ATUALIZADO
 # ==========================================
 def extrair_matriz_imagem(imagem, api_key):
-    # Consulta os modelos disponíveis
+    # Consulta a lista de modelos ativos na API do Google
     models_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
     res_models = requests.get(models_url)
 
     if res_models.status_code == 429:
         raise ValueError(
-            "⏳ Limite de requisições atingido. Aguarde 30 segundos e tente novamente."
+            "⏳ Limite de requisições atingido. Aguarde cerca de 30 segundos e tente novamente."
         )
     elif res_models.status_code != 200:
         raise ValueError(
@@ -139,14 +139,15 @@ def extrair_matriz_imagem(imagem, api_key):
         if "generateContent" in m.get("supportedGenerationMethods", [])
     ]
 
-    # Dá prioridade absoluta ao gemini-1.5-flash (maior cota gratuita)
-    modelo_escolhido = None
+    # Lista de preferência com os modelos mais novos primeiro
     preferencias = [
+        "models/gemini-3.5-flash",
+        "models/gemini-2.5-flash",
         "models/gemini-1.5-flash",
         "models/gemini-1.5-flash-8b",
-        "models/gemini-1.5-pro",
     ]
 
+    modelo_escolhido = None
     for pref in preferencias:
         if pref in modelos_disponiveis:
             modelo_escolhido = pref
@@ -156,7 +157,7 @@ def extrair_matriz_imagem(imagem, api_key):
         modelo_escolhido = (
             modelos_disponiveis[0]
             if modelos_disponiveis
-            else "models/gemini-1.5-flash"
+            else "models/gemini-3.5-flash"
         )
 
     img_b64 = imagem_para_base64_otimizada(imagem)
@@ -199,7 +200,7 @@ def extrair_matriz_imagem(imagem, api_key):
 
     if response.status_code == 429:
         raise ValueError(
-            "⏳ Limite por minuto do plano gratuito atingido. Aguarde 30 segundos e clique em Destruir no Boggle novamente!"
+            "⏳ Cota por minuto excedida. Aguarde 20 segundos e tente novamente!"
         )
     elif response.status_code != 200:
         raise ValueError(
@@ -247,7 +248,7 @@ if uploaded_file and dicionario:
             st.warning("Insira sua Gemini API Key na barra lateral.")
         else:
             if st.button("🚀 Destruir no Boggle", type="primary"):
-                with st.spinner("Lendo a grade com o modelo Flash..."):
+                with st.spinner("Lendo a grade com a IA..."):
                     try:
                         matriz = extrair_matriz_imagem(imagem, api_key)
                         st.success("Grade identificada!")
