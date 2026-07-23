@@ -1,101 +1,100 @@
 import base64
-import hashlib
 import io
 import json
-import random
 import re
-import time
 import urllib.request
-
 import pandas as pd
 import requests
-import streamlit as st
 from PIL import Image
-
+import streamlit as st
 
 # ==========================================
-# CONFIG STREAMLIT
+# CONFIGURAÇÃO DA PÁGINA STREAMLIT
 # ==========================================
-st.set_page_config(page_title="Robô Solver de Boggle", page_icon="🧩", layout="wide")
+st.set_page_config(
+    page_title="Robô Hacker de Boggle", page_icon="🧩", layout="wide"
+)
+
 st.title("🧩 Robô Solver de Boggle (Netflix)")
+st.markdown(
+    "Carregue a foto da TV. O robô vai ler a grade (inclusive blocos como CH) e calcular as maiores palavras do dicionário em zigue-zague!"
+)
+
+with st.sidebar:
+    st.header("⚙️ Configurações")
+    api_key = st.text_input(
+        "Gemini API Key",
+        type="password",
+    )
+    if not api_key and "GEMINI_API_KEY" in st.secrets:
+        api_key = st.secrets["GEMINI_API_KEY"]
 
 
 # ==========================================
-# CONTROLES DE “ANTI-ESTOURO DE COTA”
+# MOTOR DICIONÁRIO PT-BR (CACHE)
 # ==========================================
-def qpm_guard(min_interval=1.5):
-    """Garante espaçamento mínimo entre chamadas HTTP (evita estourar RPM/QPM)."""
-    agora = time.time()
-    ultimo = st.session_state.get("_last_req_ts", 0.0)
-    espera = min_interval - (agora - ultimo)
-    if espera > 0:
-        time.sleep(espera)
-    st.session_state["_last_req_ts"] = time.time()
-
-
-def debounce_click(intervalo=5):
-    """Evita clique duplo no botão (Streamlit pode rerodar rápido)."""
-    agora = time.time()
-    ultimo = st.session_state.get("_last_click_ts", 0.0)
-    if agora - ultimo < intervalo:
-        faltam = intervalo - (agora - ultimo)
-        st.warning(f"Aguarde {faltam:.1f}s antes de tentar de novo.")
-        st.stop()
-    st.session_state["_last_click_ts"] = agora
-
-
-# ==========================================
-# DICIONÁRIO PT-BR (CACHE)
-# ==========================================
-@st.cache_data(ttl=21600)  # 6h
+@st.cache_data
 def carregar_dicionario_pt():
     url = "https://raw.githubusercontent.com/pythonprobr/palavras/master/palavras.txt"
-    resposta = urllib.request.urlopen(url, timeout=60)
-    palavras_raw = resposta.read().decode("utf-8").splitlines()
+    try:
+        resposta = urllib.request.urlopen(url)
+        palavras_raw = resposta.read().decode("utf-8").splitlines()
 
-    dicionario = set()
-    prefixos = set()
+        dicionario = set()
+        prefixos = set()
 
-    for p in palavras_raw:
-        p = p.upper().strip()
-        if len(p) >= 2 and "-" not in p and "." not in p:
-            dicionario.add(p)
-            for i in range(1, len(p) + 1):
-                prefixos.add(p[:i])
+        for p in palavras_raw:
+            p = p.upper().strip()
+            if len(p) >= 3 and "-" not in p and "." not in p:
+                dicionario.add(p)
+                for i in range(1, len(p) + 1):
+                    prefixos.add(p[:i])
 
-    return dicionario, prefixos
+        return dicionario, prefixos
+    except Exception as e:
+        st.error(f"Erro ao baixar dicionário: {str(e)}")
+        return set(), set()
 
 
 # ==========================================
-# BUSCA DFS (Boggle)
+# MOTOR DE BUSCA ZIGUE-ZAGUE (DFS)
 # ==========================================
 def buscar_palavras_boggle(matriz, dicionario, prefixos):
     linhas = len(matriz)
     colunas = len(matriz[0]) if linhas > 0 else 0
     palavras_encontradas = {}
 
-    direcoes = [
-        (-1, -1), (-1, 0), (-1, 1),
-        (0, -1),           (0, 1),
-        (1, -1),  (1, 0),  (1, 1),
-    ]
-
     def dfs(r, c, visitados, palavra_atual, caminho):
-        letra = str(matriz[r][c]).upper().strip()
-        nova = palavra_atual + letra
+        letra_celula = str(matriz[r][c]).upper().strip()
+        nova_palavra = palavra_atual + letra_celula
 
-        if nova not in prefixos:
+        if nova_palavra not in prefixos:
             return
 
-        if nova in dicionario and len(nova) >= 2:
-            if nova not in palavras_encontradas:
-                palavras_encontradas[nova] = list(caminho)
+        if nova_palavra in dicionario and len(nova_palavra) >= 3:
+            if nova_palavra not in palavras_encontradas:
+                palavras_encontradas[nova_palavra] = list(caminho)
+
+        direcoes = [
+            (-1, -1),
+            (-1, 0),
+            (-1, 1),
+            (0, -1),
+            (0, 1),
+            (1, -1),
+            (1, 0),
+            (1, 1),
+        ]
 
         for dr, dc in direcoes:
             nr, nc = r + dr, c + dc
-            if 0 <= nr < linhas and 0 <= nc < colunas and (nr, nc) not in visitados:
+            if (
+                0 <= nr < linhas
+                and 0 <= nc < colunas
+                and (nr, nc) not in visitados
+            ):
                 visitados.add((nr, nc))
-                dfs(nr, nc, visitados, nova, caminho + [(nr, nc)])
+                dfs(nr, nc, visitados, nova_palavra, caminho + [(nr, nc)])
                 visitados.remove((nr, nc))
 
     for r in range(linhas):
@@ -106,220 +105,180 @@ def buscar_palavras_boggle(matriz, dicionario, prefixos):
 
 
 # ==========================================
-# IMAGEM -> BASE64 + HASH (cache por foto)
+# REDIMENSIONAR E CONVERTER IMAGEM
 # ==========================================
-def b64_e_hash_da_imagem(imagem: Image.Image):
-    img = imagem.copy().convert("RGB")
-    img.thumbnail((900, 900))
-
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=85)
-    raw = buf.getvalue()
-
-    img_b64 = base64.b64encode(raw).decode("utf-8")
-    img_hash = hashlib.sha256(raw).hexdigest()
-    return img_b64, img_hash
+def imagem_para_base64_otimizada(imagem):
+    img_temp = imagem.copy().convert("RGB")
+    img_temp.thumbnail((800, 800))  # Reduz resolução para economizar cota de tokens
+    buffered = io.BytesIO()
+    img_temp.save(buffered, format="JPEG", quality=85)
+    return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
 
 # ==========================================
-# LISTAR MODELOS (CACHE 6h)
+# EXTRAÇÃO VIA REST API COM MODELO ATUALIZADO
 # ==========================================
-@st.cache_data(ttl=21600)
-def listar_modelos(api_key: str):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
-    res = requests.get(url, timeout=60)
-    res.raise_for_status()
-    data = res.json()
+def extrair_matriz_imagem(imagem, api_key):
+    # Consulta a lista de modelos ativos na API do Google
+    models_url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    res_models = requests.get(models_url)
 
-    return [
+    if res_models.status_code == 429:
+        raise ValueError(
+            "⏳ Limite de requisições atingido. Aguarde cerca de 30 segundos e tente novamente."
+        )
+    elif res_models.status_code != 200:
+        raise ValueError(
+            f"Erro de autenticação (Código {res_models.status_code}): {res_models.text}"
+        )
+
+    models_data = res_models.json()
+    modelos_disponiveis = [
         m["name"]
-        for m in data.get("models", [])
+        for m in models_data.get("models", [])
         if "generateContent" in m.get("supportedGenerationMethods", [])
     ]
 
-
-# ==========================================
-# EXTRAIR MATRIZ VIA GEMINI (modelo -image, retry 429/503)
-# ==========================================
-def extrair_matriz_imagem(imagem: Image.Image, api_key: str, min_interval=1.5):
-    if not api_key:
-        raise ValueError("Informe a Gemini API Key.")
-
-    # Cache por imagem (se a foto for a mesma, não chama API de novo)
-    if "_matriz_cache" not in st.session_state:
-        st.session_state["_matriz_cache"] = {}
-
-    img_b64, img_hash = b64_e_hash_da_imagem(imagem)
-    if img_hash in st.session_state["_matriz_cache"]:
-        return st.session_state["_matriz_cache"][img_hash]
-
-    # Listar modelos (cacheado 6h)
-    qpm_guard(min_interval)
-    modelos_gc = listar_modelos(api_key)
-
-    # Filtra modelos de visão (contendo "-image")
-    modelos_image = [n for n in modelos_gc if re.search(r"(^|-)image($|[-])", n)]
-
+    # Lista de preferência com os modelos mais novos primeiro
     preferencias = [
-        "models/gemini-3.1-flash-image",
-        "models/gemini-3.1-flash-lite-image",
-        "models/gemini-3-pro-image",
-        "models/gemini-2.5-flash-image",
-        "models/gemini-3.1-flash-image-preview",
-        "models/gemini-3-pro-image-preview",
+        "models/gemini-3.5-flash",
+        "models/gemini-2.5-flash",
+        "models/gemini-1.5-flash",
+        "models/gemini-1.5-flash-8b",
     ]
 
-    modelo = next((p for p in preferencias if p in modelos_image), None)
-    if not modelo and modelos_image:
-        modelo = modelos_image[0]
+    modelo_escolhido = None
+    for pref in preferencias:
+        if pref in modelos_disponiveis:
+            modelo_escolhido = pref
+            break
 
-    if not modelo:
-        raise ValueError(
-            "Nenhum modelo de visão (-image) encontrado nesta chave. "
-            f"Modelos disponíveis: {modelos_gc}"
+    if not modelo_escolhido:
+        modelo_escolhido = (
+            modelos_disponiveis[0]
+            if modelos_disponiveis
+            else "models/gemini-3.5-flash"
         )
 
-    generate_url = f"https://generativelanguage.googleapis.com/v1beta/{modelo}:generateContent?key={api_key}"
+    img_b64 = imagem_para_base64_otimizada(imagem)
 
-    prompt = (
-        'Analise esta imagem de um jogo de palavras (Boggle). '
-        'Extraia APENAS a matriz/grade completa de letras. '
-        'IMPORTANTE: algumas células podem ter DUAS letras juntas (ex.: "CH", "QU", "RR"). '
-        'Extraia exatamente como aparece no bloco.\n\n'
-        'Responda EXCLUSIVAMENTE em JSON estrito, sem markdown, neste formato:\n'
-        '{"matriz":[["E","J","S","Z"],["C","CH","I","F"],["A","B","O","S"],["R","T","U","L"]]}'
-    )
+    prompt = """
+    Analise esta imagem de um jogo de palavras (Boggle).
+    Extraia APENAS a matriz/grade completa de letras.
+    MUITO IMPORTANTE: Observe se algumas células possuem DUAS letras juntas (exemplo: "CH", "QU", "RR"). 
+    Extraia exatamente como está no bloco (mantenha o "CH" na mesma string da célula).
+
+    Responda EXCLUSIVAMENTE em formato JSON estrito:
+    {
+      "matriz": [
+        ["E", "J", "S", "Z", "Z", "S"],
+        ["C", "CH", "I", "F", "O", "S"]
+      ]
+    }
+    Não inclua markdown extra, apenas o JSON puro.
+    """
+
+    generate_url = f"https://generativelanguage.googleapis.com/v1beta/{modelo_escolhido}:generateContent?key={api_key}"
 
     payload = {
         "contents": [
             {
                 "parts": [
                     {"text": prompt},
-                    {"inline_data": {"mime_type": "image/jpeg", "data": img_b64}},
+                    {
+                        "inline_data": {
+                            "mime_type": "image/jpeg",
+                            "data": img_b64,
+                        }
+                    },
                 ]
             }
-        ],
-        # resposta curta = menos tokens/min
-        "generationConfig": {"maxOutputTokens": 128, "temperature": 0.2},
+        ]
     }
 
-    max_retries = 6
-    response = None
+    response = requests.post(generate_url, json=payload)
 
-    for attempt in range(max_retries):
-        qpm_guard(min_interval)
-
-        try:
-            response = requests.post(generate_url, json=payload, timeout=120)
-        except requests.exceptions.RequestException as e:
-            raise ValueError(f"Erro de conexão com a API: {e}")
-
-        if response.status_code == 200:
-            break
-
-        # 429/503: respeitar Retry-After quando existir
-        if response.status_code in (429, 503) and attempt < max_retries - 1:
-            retry_after = response.headers.get("Retry-After")
-            if retry_after and retry_after.isdigit():
-                wait_s = int(retry_after)
-            else:
-                wait_s = (2 ** attempt) + random.uniform(0, 1.5)
-            st.info(f"Limite/instabilidade ({response.status_code}). Retentando em {wait_s:.1f}s...")
-            time.sleep(wait_s)
-            continue
-
-        break
-
-    if response is None:
-        raise ValueError("Falha sem resposta da API.")
-    if response.status_code != 200:
-        raise ValueError(f"Erro ({response.status_code}): {response.text}")
+    if response.status_code == 429:
+        raise ValueError(
+            "⏳ Cota por minuto excedida. Aguarde 20 segundos e tente novamente!"
+        )
+    elif response.status_code != 200:
+        raise ValueError(
+            f"Erro na requisição ({response.status_code}): {response.text}"
+        )
 
     data = response.json()
 
-    # junta todos os parts text (às vezes vem em mais de um)
     try:
-        parts = data["candidates"][0]["content"]["parts"]
-        texto = "".join([p.get("text", "") for p in parts if isinstance(p, dict)])
-    except Exception:
+        texto_resposta = data["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError):
         raise ValueError(f"Resposta inesperada da API: {json.dumps(data)}")
 
-    match = re.search(r"\{.*\}", texto, re.DOTALL)
-    if not match:
-        raise ValueError("A IA não retornou JSON válido. Resposta: " + texto)
-
-    obj = json.loads(match.group())
-    matriz = obj.get("matriz")
-
-    if not isinstance(matriz, list) or not matriz or not isinstance(matriz[0], list):
-        raise ValueError("JSON inválido: chave 'matriz' não está no formato esperado.")
-
-    # normaliza strings
-    matriz_norm = [[str(x).upper().strip() for x in linha] for linha in matriz]
-
-    # salva cache por imagem
-    st.session_state["_matriz_cache"][img_hash] = matriz_norm
-    return matriz_norm
-
-
-# ==========================================
-# UI
-# ==========================================
-with st.sidebar:
-    st.header("⚙️ Configurações")
-    api_key = st.text_input("Gemini API Key", type="password")
-    tam_minimo = st.number_input("Tamanho mínimo", min_value=2, max_value=20, value=3, step=1)
-    max_listar = st.slider("Máx. palavras na lista", 50, 2000, 300, 50)
-    min_interval = st.slider("Intervalo entre chamadas (s)", 1.0, 6.0, 1.5, 0.5)
-
-    if st.button("Limpar cache da matriz (sessão)"):
-        st.session_state.pop("_matriz_cache", None)
-        st.success("Cache da matriz limpo.")
-
-
-arquivo = st.file_uploader("Envie a foto do Boggle (PNG/JPG)", type=["png", "jpg", "jpeg"])
-
-col1, col2 = st.columns([1, 1])
-
-with col1:
-    if arquivo:
-        img = Image.open(arquivo)
-        st.image(img, caption="Imagem enviada", use_container_width=True)
+    match_json = re.search(r"\{.*\}", texto_resposta, re.DOTALL)
+    if match_json:
+        dados = json.loads(match_json.group())
+        return dados["matriz"]
     else:
-        st.info("Envie uma imagem para começar.")
+        raise ValueError(
+            "Falha ao ler o JSON da IA. Resposta recebida: " + texto_resposta
+        )
 
-with col2:
-    st.subheader("Resultado")
 
-    if arquivo and st.button("🚀 Resolver", type="primary"):
-        debounce_click(5)
+# ==========================================
+# FLUXO PRINCIPAL
+# ==========================================
+dicionario, prefixos = carregar_dicionario_pt()
 
-        dicionario, prefixos = carregar_dicionario_pt()
+uploaded_file = st.file_uploader(
+    "Envie a foto da TV", type=["jpg", "jpeg", "png", "webp"]
+)
 
-        try:
-            with st.spinner("Lendo a grade com a IA..."):
-                matriz = extrair_matriz_imagem(img, api_key, min_interval=min_interval)
+if uploaded_file and dicionario:
+    imagem = Image.open(uploaded_file)
+    col1, col2 = st.columns([1, 1])
 
-            st.write("**Matriz extraída:**")
-            st.code(json.dumps({"matriz": matriz}, ensure_ascii=False, indent=2))
+    with col1:
+        st.subheader("🖼️ Imagem")
+        st.image(imagem, use_column_width=True)
 
-            with st.spinner("Buscando palavras..."):
-                achadas = buscar_palavras_boggle(matriz, dicionario, prefixos)
+    with col2:
+        st.subheader("⚙️ Status")
 
-            # filtra tamanho mínimo
-            palavras = [p for p in achadas.keys() if len(p) >= int(tam_minimo)]
-            palavras.sort(key=lambda x: (-len(x), x))
+        if not api_key:
+            st.warning("Insira sua Gemini API Key na barra lateral.")
+        else:
+            if st.button("🚀 Destruir no Boggle", type="primary"):
+                with st.spinner("Lendo a grade com a IA..."):
+                    try:
+                        matriz = extrair_matriz_imagem(imagem, api_key)
+                        st.success("Grade identificada!")
 
-            st.write(f"**Total de palavras (>= {tam_minimo}): {len(palavras)}**")
+                        df_grid = pd.DataFrame(matriz)
+                        st.dataframe(df_grid, use_container_width=True)
 
-            # lista limitada
-            palavras_show = palavras[: int(max_listar)]
-            df = pd.DataFrame({"palavra": palavras_show, "tamanho": [len(p) for p in palavras_show]})
-            st.dataframe(df, use_container_width=True, hide_index=True)
+                        with st.spinner(
+                            "Procurando combinações no dicionário..."
+                        ):
+                            resultados = buscar_palavras_boggle(
+                                matriz, dicionario, prefixos
+                            )
 
-            # download
-            csv = df.to_csv(index=False).encode("utf-8")
-            st.download_button("Baixar CSV", data=csv, file_name="palavras_boggle.csv", mime="text/csv")
+                        if resultados:
+                            palavras_ordenadas = sorted(
+                                resultados.keys(),
+                                key=lambda x: len(x),
+                                reverse=True,
+                            )
 
-        except Exception as e:
-            st.error(f"Ocorreu um erro: {e}")
+                            st.subheader(
+                                f"🔥 {len(palavras_ordenadas)} Palavras Encontradas!"
+                            )
+                            st.caption("As maiores palavras (mais pontos):")
+
+                            for p in palavras_ordenadas[:50]:
+                                st.markdown(f"- **{p}** ({len(p)} letras)")
+                        else:
+                            st.warning("Nenhuma palavra encontrada na grade.")
+
+                    except Exception as e:
+                        st.error(f"Erro no processamento: {str(e)}")
