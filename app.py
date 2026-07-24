@@ -10,7 +10,7 @@ from PIL import Image
 
 import google.generativeai as genai
 
-# (Opcional) “cotidiano mas não comum” via wordfreq
+# (Opcional) "cotidiano mas não comum" via wordfreq
 try:
     from wordfreq import zipf_frequency
     WORDFREQ_OK = True
@@ -40,7 +40,7 @@ def escolher_palavra_chave(palavras_encontradas: list[str], n_tabuleiro: int) ->
     """
     Palavra-chave:
     - prioriza palavras longas (por tabuleiro)
-    - se wordfreq existir: tenta “cotidiano mas não muito comum”
+    - se wordfreq existir: tenta "cotidiano mas não muito comum"
       (faixa Zipf ~ 3.0 a 4.6, alvo 3.8)
     """
     if not palavras_encontradas:
@@ -57,7 +57,7 @@ def escolher_palavra_chave(palavras_encontradas: list[str], n_tabuleiro: int) ->
         def z(w: str) -> float:
             return float(zipf_frequency(w.lower(), "pt"))
 
-        # “cotidiano mas não comum”
+        # "cotidiano mas não comum"
         cand_mid = [w for w in cand if 3.0 <= z(w) <= 4.6]
         if cand_mid:
             cand = cand_mid
@@ -74,8 +74,110 @@ def escolher_palavra_chave(palavras_encontradas: list[str], n_tabuleiro: int) ->
 
 
 # =========================================================
-# DICIONÁRIO PT-BR (CACHE)
+# DICIONÁRIO PT-BR (CACHE) + PALAVRAS COMUNS DE REFERÊNCIA
 # =========================================================
+# ✅ Referência: palavras comuns aceitas (você enviou)
+# Agora o código tem noção destas palavras ao escolher palavra-chave
+PALAVRAS_COMUNS_REF = {
+    # 3 letras
+    "QUE", "COM", "POR", "UMA", "NAS", "NOS", "DAS", "DOS", "SEM", "AOS", "MAS", "PRA", "PRO", "TEM", "FOI", 
+    "SOU", "ERA", "SER", "VER", "SEU", "SUA", "MEU", "TEU", "TUA", "ELE", "ELA", "NÓS", "NÃO", "SIM", "NEM", 
+    "DEZ", "MIL", "CEM", "VEZ", "ANO", "DIA", "BEM", "MAL", "BOM", "BOA", "DOR", "COR", "LUZ", "SOL", "PAZ", 
+    "FEZ", "VAI", "VEM", "VOU", "USA", "USO", "SOB", "LHE", "TAL", "NUM", "UNS", "MIM", "ALI", "ORA", "OCO", 
+    "TÃO", "MÃO", "PÃO", "SÃO", "DAR", "LER", "RIR", "PÔR", "TIA", "TIO", "PAI", "MÃE", "AVÓ", "AVÔ", "FAZ", 
+    "DIZ", "LEI", "LUA", "MAR", "VIA", "RUA", "VOZ", "SOM", "SAI", "VIU", "DEU", "CAI", "PÔS", "PÕE", "ATO", 
+    "EIS", "CAL", "MEL", "SAL", "CHÁ", "CÉU", "OLÁ", "ECO", "GÁS", "SUL",
+    
+    # 4 letras
+    "PARA", "MAIS", "COMO", "ONDE", "AQUI", "HOJE", "CASO", "POIS", "PELA", "PELO", "ESTE", "ESTA", "ISTO", 
+    "ISSO", "DELE", "DELA", "NELE", "NELA", "CADA", "ALGO", "NADA", "TUDO", "VIDA", "CASA", "LADO", "MODO", 
+    "HORA", "DIAS", "ANOS", "BENS", "RUAS", "RUIM", "ALTO", "LEVE", "DOCE", "PODE", "QUER", "FALA", "FICA", 
+    "VEJA", "VOCÊ", "ELES", "ELAS", "DOIS", "TRÊS", "SETE", "OITO", "NOVE", "DOZE", "LOGO", "CEDO", "SAIR", 
+    "SAIU", "VEIO", "COME", "COMI", "BEBE", "BEBI", "LEVA", "PAGO", "PAGA", "ABRE", "ABRI", "AMEI", "MORA", 
+    "MORO", "CALA", "CALE", "RIEM", "RISO", "VEEM", "PÔDE", "APÓS", "AZUL", "ROSA", "ROXO", "BEGE", "FLOR", 
+    "FRIO", "NEVE", "MARÉ", "LAGO", "MATA", "MESA", "CAMA", "SOFÁ", "SACO", "VELA", "FOGO", "TELA", "PANO", 
+    "POTE", "TUBO", "PEÇA", "LEIS", "REIS", "MÃES",
+    
+    # 5 letras
+    "MUITO", "ASSIM", "AINDA", "POUCO", "TEMPO", "GENTE", "COISA", "PARTE", "VEZES", "NUNCA", "SOBRE", "FAZER", 
+    "PODER", "DEVER", "DEIXA", "DESSA", "DESSE", "DESTE", "MESMO", "MENOS", "AGORA", "ANTES", "NOITE", "TARDE", 
+    "CERTO", "SERIA", "SABER", "ACHAR", "FICAR", "LEVAR", "PEDIR", "DIZER", "FALAR", "VIVER", "MUNDO", "LIVRO", 
+    "JOVEM", "IDOSO", "HOMEM", "CARRO", "CASAS", "RUINS", "ALTOS", "BAIXO", "LEVES", "DOCES", "CLARO", "PRETO", 
+    "VERDE", "AZUIS", "CINZA", "FELIZ", "CHATO", "CHEIO", "VAZIO", "FORTE", "FRACO", "CURTO", "LONGO", "OUTRO", 
+    "MESMA", "TODOS", "TODAS", "MAIOR", "MENOR", "DEMAIS", "ACIMA", "ENTRE", "DESDE", "ONTEM", "CEDER", "SAÍDA", 
+    "CHEGA", "FEITA", "FEITO", "DISSE", "FOMOS", "FORAM", "ESTAR", "ESTOU", "ESTÃO", "SERÃO", "TERIA", "HOUVE", 
+    "HAVER", "POSSO", "POSSA", "SABEM", "QUERO", "VAMOS", "VIMOS", "BUSCA", "ACHOU", "TRAGO", "LEITO", "LEMAS", 
+    "TEMAS", "ITENS", "DADOS", "FATOS",
+    
+    # 6 letras
+    "PORQUE", "DEPOIS", "EMBORA", "APENAS", "SEMPRE", "JAMAIS", "DENTRO", "ABAIXO", "FRENTE", "APESAR", "PESSOA", 
+    "ESCOLA", "AMIGOS", "AMIGAS", "COMIDA", "BEBIDA", "SALADA", "CIDADE", "ESTADO", "BAIRRO", "CENTRO", "PLANTA", 
+    "ANIMAL", "IMAGEM", "TAREFA", "ESTUDO", "MATRIZ", "PLANOS", "TOMADA", "SEGURO", "MÍNIMO", "MÁXIMO", "RÁPIDO", 
+    "MODELO", "MÉTODO", "TEORIA", "CÓDIGO", "TÓPICO", "PÁGINA", "TÍTULO", "LISTAS", "TEXTOS", "FRASES", "ACESSO", 
+    "SENHAS", "MOEDAS", "PREÇOS", "CUSTOS", "VENDAS", "COMPRA", "BOLETO", "CARTÃO", "DÉBITO", "EQUIPE", "CORPOS", 
+    "CABEÇA", "BRAÇOS", "PERNAS", "LÁBIOS", "CABELO", "COSTAS", "OUVIDO", "VACINA", "DOENÇA", "DOENTE", "FEBRES", 
+    "CÂNCER", "MEDIDA", "QUILOS", "LITROS", "METROS", "GRAMAS", "GRANDE", "PRONTO", "PRONTA", "QUENTE", "ESCURO", 
+    "GELADO", "ALEGRE", "TRISTE", "JUSTOS", "CERTOS", "ERRADO", "ERRADA", "BRANCO", "CINZAS", "AMANHÃ", "QUARTA", 
+    "QUINTA", "SÁBADO", "TERÇAS", "CORRER", "VENDER", "BUSCAR", "CHEGAR", "VOLTAR", "FECHAR", "PASSAR", "OBJETO", 
+    "MOTIVO",
+    
+    # 7 letras
+    "EXEMPLO", "PESSOAS", "FAMÍLIA", "CRIANÇA", "PRECISO", "PRECISA", "CAMINHO", "MOMENTO", "SEGUNDO", "MERCADO", 
+    "SISTEMA", "PRODUTO", "SERVIÇO", "CUIDADO", "CELULAR", "PROJETO", "REUNIÃO", "VIAGENS", "DOMINGO", "SEGUNDA", 
+    "LIMPEZA", "COZINHA", "CADEIRA", "TIJOLOS", "AMARELO", "ALEGRIA", "OBJETOS", "GARRAFA", "SAPATOS", "CAMISAS", 
+    "ARMÁRIO", "CADERNO", "LEITURA", "SORRISO", "PINTURA", "RETRATO", "DESENHO", "CLIENTE", "EMPRESA", "NEGÓCIO", 
+    "ESTADOS", "CENTROS", "ESTRADA", "AVENIDA", "RODOVIA", "VIADUTO", "PEQUENO", "PEQUENA", "MAIORIA", "MENINOS", 
+    "MENINAS", "ABRINDO", "PAGANDO", "APLICAR", "ACEITAR", "AJUDADO", "CANSADO", "CANSADA", "FELIZES", "TRISTES", 
+    "CERTEZA", "DÚVIDAS", "MATÉRIA", "TECLADO", "MONITOR", "GARAGEM", "QUARTOS", "CANETAS", "ACENDER", "APAGADA", 
+    "DESLIGO", "DESERTO", "PLANETA", "GRAMADO", "LARANJA", "QUEIJOS", "TOMATES", "BANANAS", "PEPINOS", "FEIJÕES", 
+    "BOLACHA", "CENOURA", "ABÓBORA", "GERENTE", "DIRETOR", "COMPRAS", "ESTOQUE", "BALANÇO", "DESPESA", "RECEITA", 
+    "FATURAR", "TÍTULOS", "ARQUIVO", "IMAGENS", "FIGURAS", "LEGENDA", "CAPITAL", "CIDADES", "ADULTOS", "SENHORA",
+    
+    # 8 letras
+    "TRABALHO", "PROBLEMA", "QUALQUER", "CONTROLE", "PROGRAMA", "TELEFONE", "INTERNET", "APRENDER", "MENSAGEM", 
+    "RESPOSTA", "PERGUNTA", "MATERIAL", "PROCESSO", "NEGÓCIOS", "EMPRESAS", "MERCADOS", "SISTEMAS", "PROJETOS", 
+    "CLIENTES", "PESSOAIS", "FAMÍLIAS", "CRIANÇAS", "FERIADOS", "SEGUNDOS", "MOMENTOS", "CAMINHOS", "DETALHES", 
+    "AMBIENTE", "SOLUÇÕES", "PRÁTICAS", "ENTREGAS", "ESTOQUES", "DESPESAS", "RECEITAS", "BALANÇOS", "ARQUIVOS", 
+    "LEGENDAS", "CADASTRO", "SUPORTES", "ELEMENTO", "CONCEITO", "CONTEXTO", "CONTEÚDO", "CAPÍTULO", "CAPITAIS", 
+    "DISTRITO", "AVENIDAS", "RODOVIAS", "VIADUTOS", "PEQUENOS", "PEQUENAS", "ALTITUDE", "LARGURAS", "PROFUNDO", 
+    "PROFUNDA", "ANTERIOR", "RECENTES", "PASSADOS", "SEGUINTE", "PRIMEIRO", "TERCEIRO", "VITÓRIAS", "DERROTAS", 
+    "CORRENDO", "CHEGANDO", "VOLTANDO", "FECHANDO", "PASSANDO", "BUSCANDO", "CHAMANDO", "APRENDIA", "ESTUDAVA", 
+    "PESQUISA", "ANALISTA", "MÉTODOS", "TEÓRICOS", "GESTORES", "GERENTES", "DIRETORA", "FORNECER", "CONSUMIR", 
+    "COMPRAVA", "VENDERAM", "FECHARAM", "CORRERAM", "LEITORAS", "LEITORES", "UNIDADES", "CENTENAS", "MILHARES", 
+    "MILHÕES", "BILHÕES", "SETORIAL", "REGIONAL", "NACIONAL", "ESTADUAL", "LIMPEZAS", "COZINHAS", "BANHEIRO", 
+    "CADEIRAS",
+    
+    # 9 letras
+    "APLICAÇÃO", "PROGRAMAS", "PROGRAMAR", "PROGRAMOU", "CONTROLES", "TELEFONES", "MENSAGENS", "RESPOSTAS", 
+    "PERGUNTAS", "MATERIAIS", "PROCESSOS", "NEGOCIADO", "TRABALHAR", "TRABALHOS", "PROBLEMAS", "QUALIDADE", 
+    "TREINANDO", "TREINADOR", "TREINADOS", "ATIVIDADE", "PLANEJADO", "PLANEJADA", "OBJETIVOS", "OBJETIVAS", 
+    "OBJETIVAR", "OBJETIVOU", "APRENDIAM", "APRENDIDO", "DOCUMENTO", "ASSINANDO", "ASSINARAM", "ASSINANTE", 
+    "COZINHADO", "BANHEIROS", "ECONOMIAS", "ECONÔMICO", "ECONÔMICA", "FATURADOS", "FATURADAS", "RECEBIDOS", 
+    "RECEBIDAS", "DESPENSAS", "BALANCETE", "ESTOQUEAR", "COMPRADOR", "COMPRAMOS", "COMPRANDO", "COMPRARAM", 
+    "VENDEDORA", "VENDERIAM", "ENTREGUEI", "ENTREGUES", "ENTREGARÁ", "PAGAMENTO", "COBRANÇAS", "CADASTRAR", 
+    "CADASTROS", "REGISTROS", "CONSULTAR", "CONSULTAS", "RELATÓRIO", "PLANILHAS", "ORÇAMENTO", "COTAÇÕES", 
+    "REPASSADO", "REPAGINAR", "ANALISADO", "ANALISADA", "AVALIADAS", "AVALIADOS", "AVALIANDO", "MELHORIAS", 
+    "MELHORADO", "MELHORADA", "OTIMIZADO", "OTIMIZADA", "ORGANIZAR", "ORGANIZEI", "ORGANIZAM", "ORGANIZOU", 
+    "PRIORIZAR", "PRIORIZEI", "PRIORIZAM", "PRIORIZOU", "SEPARANDO", "SEPARAMOS", "SEPARADAS", "SEPARADOS", 
+    "CONECTADA", "CONECTADO", "DESLIGADO", "DESLIGADA", "DESLIGUEI", "LIGAMENTO", "ATUALIZAR", "ATUALIZEI", 
+    "ATUALIZAM", "ATUALIZOU", "APROVAÇÃO", "RESOLVIDO",
+    
+    # 10 letras
+    "APLICAÇÕES", "INFORMAÇÃO", "QUALIDADES", "PLANEJAMOS", "APROVEITAR", "APROVEITAM", "APROVEITOU", "APRIMORAR", 
+    "APRENDEMOS", "APRENDENDO", "CONHECEMOS", "CONHECENDO", "COMBINAMOS", "COMBINANDO", "CONSIDERAR", "CONSIDERAM", 
+    "CONSIDEROU", "CONTRATADA", "CONTRATADO", "CONSTRUÇÃO", "MELHORANDO", "MELHORAMOS", "MELHORARAM", "MELHORIAS", 
+    "OTIMIZANDO", "OTIMIZAMOS", "OTIMIZADOR", "ORGANIZADA", "ORGANIZADO", "PRIORIDADE", "FINANCEIRO", "FINANCEIRA", 
+    "FATURADORA", "RECEBERMOS", "RECEBERIAM", "PAGAMENTOS", "COBRADORES", "CADASTRADO", "CADASTRADA", "REGISTRADO", 
+    "REGISTRADA", "RELATÓRIOS", "ORÇAMENTOS", "AVALIAÇÕES", "OTIMIZAÇÃO", "CONECTADAS", "CONECTADOS", "DESLIGADAS", 
+    "DESLIGADOS", "LIGAMENTOS", "ATUALIZADO", "ATUALIZADA", "RESOLVIDOS", "RESOLVIDAS", "DOCUMENTOS", "DOCUMENTAR", 
+    "DOCUMENTOU", "ASSINATURA", "COZINHEIRO", "COZINHEIRA", "ECONÔMICOS", "ECONÔMICAS", "ENTREGAMOS", "ENTREGANDO", 
+    "ENTREGADOR", "ENTREGARAM", "ENTREGAREI", "CONSULTADO", "CONSULTADA", "CONSULTORA", "RELACIONAR", "RELACIONOU", 
+    "RELACIONAM", "APRESENTAR", "APRESENTOU", "APRESENTAM", "DISPONÍVEL", "POSSÍVEIS", "CATEGORIAS", "CRONOGRAMA", 
+    "PORTFÓLIOS", "BIBLIOTECA", "APRIMORADO", "APRIMORADA", "SEGMENTADO", "SEGMENTOS", "APLICATIVO", "COMPUTADOR", 
+    "FERRAMENTA", "RESULTADOS", "DIFERENTES", "FACILMENTE", "LENTAMENTE", "CLARAMENTE", "CONFIGURAR", "GARANTIMOS", 
+    "GARANTINDO", "GARANTIDOS", "GARANTIDAS", "QUALIFICAR"
+}
+
 @st.cache_data(ttl=21600)  # 6h
 def carregar_dicionario_pt():
     url = "https://raw.githubusercontent.com/pythonprobr/palavras/master/palavras.txt"
@@ -91,6 +193,12 @@ def carregar_dicionario_pt():
             dicionario.add(p)
             for i in range(1, len(p) + 1):
                 prefixos.add(p[:i])
+
+    # ✅ Adiciona as palavras comuns de referência ao dicionário
+    dicionario.update(PALAVRAS_COMUNS_REF)
+    for p in PALAVRAS_COMUNS_REF:
+        for i in range(1, len(p) + 1):
+            prefixos.add(p[:i])
 
     return dicionario, prefixos
 
@@ -254,13 +362,16 @@ def _prompt_correcao(linhas, colunas, matriz_ruim):
     )
 
 def _get_api_key():
-    # mantém compatível com seu deploy
-    return st.secrets.get("GOOGLE_API_KEY", "") or st.secrets.get("GEMINI_API_KEY", "")
+    # pega do Streamlit secrets (sem input)
+    return (
+        st.secrets.get("GOOGLE_API_KEY", "")
+        or st.secrets.get("GEMINI_API_KEY", "")
+    )
 
 def extrair_matriz_google(imagem: Image.Image, linhas: int, colunas: int):
     api_key = _get_api_key()
     if not api_key:
-        raise ValueError("A GOOGLE_API_KEY (ou GEMINI_API_KEY) não foi configurada nos Secrets do Streamlit.")
+        raise ValueError('A GOOGLE_API_KEY ou GEMINI_API_KEY não foi configurada nos Secrets do Streamlit.')
 
     genai.configure(api_key=api_key)
 
@@ -271,109 +382,100 @@ def extrair_matriz_google(imagem: Image.Image, linhas: int, colunas: int):
     img_resized.thumbnail((1400, 1400))
 
     # 1) primeira tentativa
-    resp1 = model.generate_content(
-        [_prompt_extracao(linhas, colunas), img_resized],
-        request_options={"timeout": 120},
-    )
+    resp1 = model.generate_content([_prompt_extracao(linhas, colunas), img_resized], request_options={"timeout": 120})
     j1 = extrair_json_estrito(resp1.text)
     m1 = sanear_matriz(j1.get("matriz"))
 
-    # tenta ajustar já
     try:
         m_ok = ajustar_dimensoes(m1, linhas, colunas)
         return modelo_id, m_ok, j1
     except Exception:
         pass
 
-    # 2) correção usando a matriz retornada
-    resp2 = model.generate_content(
-        [_prompt_correcao(linhas, colunas, m1), img_resized],
-        request_options={"timeout": 120},
-    )
+    # 2) retry: correção de dimensões
+    resp2 = model.generate_content([_prompt_correcao(linhas, colunas, m1)], request_options={"timeout": 120})
     j2 = extrair_json_estrito(resp2.text)
     m2 = sanear_matriz(j2.get("matriz"))
-    m_ok2 = ajustar_dimensoes(m2, linhas, colunas)
-    return modelo_id, m_ok2, j2
+
+    m_ok = ajustar_dimensoes(m2, linhas, colunas)
+    return modelo_id, m_ok, j2
 
 
 # =========================================================
-# UI: entrada
+# UI PRINCIPAL
 # =========================================================
-with st.sidebar:
-    st.header("Configurações")
-    tamanho = st.selectbox("Tamanho do tabuleiro", list(TAMANHOS.keys()), index=0)
-    st.caption(f"Mínimo de letras por palavra: **{MIN_PALAVRA}** (fixo)")
+st.sidebar.header("⚙️ Configurações")
 
-    st.divider()
-    max_exibir = st.slider("Máximo de palavras para listar", 50, 2000, 300, 50)
+tamanho_selecionado = st.sidebar.selectbox(
+    "Tamanho do tabuleiro:",
+    options=list(TAMANHOS.keys()),
+    index=0
+)
 
-st.divider()
+linhas = colunas = TAMANHOS[tamanho_selecionado]
 
-arquivo = st.file_uploader("Envie a foto do tabuleiro", type=["png", "jpg", "jpeg", "webp"])
+arquivo_imagem = st.file_uploader("📤 Upload da imagem do tabuleiro", type=["png", "jpg", "jpeg"])
 
-if not arquivo:
-    st.stop()
+if arquivo_imagem:
+    imagem = Image.open(arquivo_imagem)
+    st.image(imagem, caption="Tabuleiro enviado", use_container_width=True)
 
-imagem = Image.open(arquivo).convert("RGB")
-st.image(imagem, caption="Imagem enviada", use_container_width=True)
+    with st.spinner("🔄 Extraindo matriz da imagem via Gemini..."):
+        try:
+            modelo_id, matriz, json_completo = extrair_matriz_google(imagem, linhas, colunas)
+            
+            st.success(f"✅ Matriz extraída com sucesso! (Modelo: `{modelo_id}`)")
+            
+            with st.expander("🔍 Ver matriz extraída"):
+                df_matriz = pd.DataFrame(matriz)
+                st.dataframe(df_matriz, use_container_width=True)
 
-n = TAMANHOS[tamanho]
+        except Exception as e:
+            st.error(f"❌ Erro ao extrair a matriz: {e}")
+            st.stop()
 
-# =========================================================
-# Pipeline: extrair → resolver → palavra-chave → listar
-# =========================================================
-try:
-    t0 = time.time()
-    with st.spinner("Extraindo a grade com o Gemini..."):
-        modelo_id, matriz, raw_json = extrair_matriz_google(imagem, n, n)
-    t1 = time.time()
+    with st.spinner("🔍 Buscando palavras no tabuleiro..."):
+        try:
+            dicionario, prefixos = carregar_dicionario_pt()
+            achadas = buscar_palavras_boggle(matriz, dicionario, prefixos)
+            palavras = sorted(achadas.keys(), key=lambda w: (-len(w), w))
 
-    st.success(f"Grade extraída com sucesso. Modelo: {modelo_id} | Tempo: {t1 - t0:.2f}s")
+            st.success(f"✅ {len(palavras)} palavras encontradas!")
 
-    st.subheader("📋 Grade reconhecida")
-    df_grade = pd.DataFrame(matriz)
-    st.dataframe(df_grade, use_container_width=True)
+            # ✅ PALAVRA-CHAVE AUTOMÁTICA
+            n_tabuleiro = len(matriz)
+            palavra_chave = escolher_palavra_chave(palavras, n_tabuleiro)
 
-    dicionario, prefixos = carregar_dicionario_pt()
+            st.subheader("🎯 Palavra-chave sugerida")
+            if palavra_chave:
+                st.markdown(f"**{palavra_chave}**  \n_Tamanho: {len(palavra_chave)} letras_")
+            else:
+                st.write("Não foi possível sugerir palavra-chave nesta rodada.")
 
-    with st.spinner("Buscando palavras (DFS)..."):
-        t2 = time.time()
-        achadas = buscar_palavras_boggle(matriz, dicionario, prefixos)
-        t3 = time.time()
+            st.divider()
 
-    palavras = sorted(achadas.keys(), key=lambda w: (-len(w), w))
-    st.info(f"Encontradas: {len(palavras)} palavras | Tempo solver: {t3 - t2:.2f}s")
-
-    # ✅ melhoria: palavra-chave automática
-    palavra_chave = escolher_palavra_chave(palavras, n)
-
-    st.subheader("🎯 Palavra-chave (automática)")
-    if palavra_chave:
-        extra = ""
-        if WORDFREQ_OK:
-            z = float(zipf_frequency(palavra_chave.lower(), "pt"))
-            extra = f" (Zipf≈{z:.2f})"
-        st.write(f"**{palavra_chave}**{extra}")
-    else:
-        st.write("Não foi possível sugerir uma palavra-chave nesta rodada.")
-
-    st.subheader("🔎 Palavras encontradas")
-    if palavras:
-        dados = []
-        for w in palavras[:max_exibir]:
-            dados.append({
-                "palavra": w,
-                "tamanho": len(w),
-                "é_palavra_chave": (w == palavra_chave),
+            # Lista de palavras
+            st.subheader("📝 Palavras encontradas")
+            
+            df_palavras = pd.DataFrame({
+                "Palavra": palavras,
+                "Tamanho": [len(p) for p in palavras]
             })
-        st.dataframe(pd.DataFrame(dados), use_container_width=True)
-    else:
-        st.write("Nenhuma palavra encontrada (com mínimo de 3 letras).")
+            
+            st.dataframe(df_palavras, use_container_width=True, height=400)
 
-    with st.expander("Debug (JSON bruto retornado pelo modelo)"):
-        st.json(raw_json)
+            # Download
+            csv = df_palavras.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Baixar lista de palavras (CSV)",
+                data=csv,
+                file_name=f"palavras_{tamanho_selecionado}.csv",
+                mime="text/csv"
+            )
 
-except Exception as e:
-    st.error(str(e))
-    with st.expander("Stacktrace"):
-        st.code(traceback.format_exc())
+        except Exception as e:
+            st.error(f"❌ Erro ao buscar palavras: {e}")
+            st.code(traceback.format_exc())
+
+else:
+    st.info("👆 Faça upload de uma imagem do tabuleiro para começar.")
