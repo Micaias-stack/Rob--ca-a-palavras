@@ -96,7 +96,8 @@ def extrair_matriz_google(api_key: str, imagem: Image.Image, n: int):
         raise ValueError("A GOOGLE_API_KEY não foi configurada nos Secrets do Streamlit.")
     
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    # CORREÇÃO APLICADA AQUI CONFORME SUA SUGESTÃO
+    model = genai.GenerativeModel('gemini-3.5-flash')
 
     prompt = (
         f"Analise a imagem de um tabuleiro do jogo Boggle. "
@@ -119,7 +120,7 @@ def extrair_matriz_google(api_key: str, imagem: Image.Image, n: int):
 try:
     dicionario_pt, prefixos_pt = carregar_dicionario_pt()
     GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY")
-    GROQ_API_KEY = st.secrets.get("GROQ_API_KEY") # Mantido caso precise no futuro
+    GROQ_API_KEY = st.secrets.get("GROQ_API_KEY")
 except Exception as e:
     st.error(f"Erro na inicialização: {e}")
     st.stop()
@@ -165,8 +166,9 @@ with col2:
                             columns=["Palavra"]
                         )
                         df["Tamanho"] = df["Palavra"].str.len()
-                        st.dataframe(df, use_container_width=True, height=400)
+                        st.dataframe(df, use_container_width=True)
                     else:
-                        st.warning("Nenhuma palavra encontrada para esta combinação.")
+                        st.warning("Nenhuma palavra encontrada para este tabuleiro.")
+
                 except Exception as e:
                     st.error(f"Ocorreu um erro: {e}")
