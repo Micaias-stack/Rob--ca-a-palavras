@@ -147,29 +147,26 @@ with col2:
                     with st.spinner("🔍 Analisando a imagem com Google Gemini..."):
                         start_time = time.time()
                         json_resposta = extrair_matriz_google(GOOGLE_API_KEY, imagem, tamanho_n)
-                        matriz = normalizar_matriz(json_resposta.get("matriz", []), tamanho_n)
-                        st.write("✅ Matriz extraída pela IA:")
-                        st.dataframe(pd.DataFrame(matriz), use_container_width=True)
+                        matriz = normalizar_matriz(json_resposta.get("matriz"), tamanho_n)
+                        end_time_ia = time.time()
+                    st.success(f"Matriz {tamanho_n}x{tamanho_n} extraída em {end_time_ia - start_time:.1f}s.")
+                    st.code(json.dumps(matriz, indent=2, ensure_ascii=False), language="json")
 
                     with st.spinner("🧠 Procurando palavras no dicionário..."):
+                        start_time_dfs = time.time()
                         palavras_achadas = buscar_palavras_boggle(matriz, dicionario_pt, prefixos_pt)
-                        end_time = time.time()
-                        
-                        st.success(f"🎉 {len(palavras_achadas)} palavras encontradas em {end_time - start_time:.2f} segundos!")
-                        
-                        # Organiza e exibe as palavras por tamanho
-                        palavras_ordenadas = sorted(palavras_achadas.keys(), key=lambda p: (-len(p), p))
-                        
-                        df_palavras = pd.DataFrame({
-                            'Palavra': palavras_ordenadas,
-                            'Tamanho': [len(p) for p in palavras_ordenadas]
-                        })
-                        st.dataframe(df_palavras, use_container_width=True, height=400)
+                        end_time_dfs = time.time()
 
+                    if palavras_achadas:
+                        st.success(f"Encontrei {len(palavras_achadas)} palavras em {end_time_dfs - start_time_dfs:.1f}s.")
+                        
+                        df = pd.DataFrame(
+                            sorted(palavras_achadas.keys(), key=len, reverse=True),
+                            columns=["Palavra"]
+                        )
+                        df["Tamanho"] = df["Palavra"].str.len()
+                        st.dataframe(df, use_container_width=True, height=400)
+                    else:
+                        st.warning("Nenhuma palavra encontrada para esta combinação.")
                 except Exception as e:
                     st.error(f"Ocorreu um erro: {e}")
-
-#### 5. Faça o Deploy
-Faça `commit` e `push` dos arquivos `app.py` e `requirements.txt` atualizados para o seu repositório no GitHub. O Streamlit Cloud vai automaticamente reconstruir o app com as novas dependências e código.
-
-Agora seu app está usando uma solução de visão de ponta, é leve, e vai funcionar perfeitamente no Streamlit Cloud.
