@@ -1,4 +1,6 @@
-streamlit>=1.36.0
-pandas>=2.2.0
-pillow>=10.3.0
-openai>=1.40.0
+streamlit
+pandas
+Pillow
+groq
+paddleocr
+paddlepaddle
