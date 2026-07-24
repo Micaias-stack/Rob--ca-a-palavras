@@ -1,3 +1,4 @@
+# app.py
 import json
 import re
 import time
@@ -38,6 +39,23 @@ def carregar_dicionario_pt():
                 prefixos.add(p[:i])
 
     return dicionario, prefixos
+
+
+# =========================================================
+# PONTUAÇÃO (Boggle clássico)
+# =========================================================
+def pontos_boggle(tam: int) -> int:
+    if tam <= 2:
+        return 0
+    if tam in (3, 4):
+        return 1
+    if tam == 5:
+        return 2
+    if tam == 6:
+        return 3
+    if tam == 7:
+        return 5
+    return 11  # 8+
 
 
 # =========================================================
@@ -95,16 +113,11 @@ def extrair_json_estrito(texto: str) -> dict:
 
 
 def _cell_ok(x: str) -> bool:
-    # célula válida: contém pelo menos 1 letra A-Z (ex: "A", "QU")
     s = (x or "").strip().upper()
     return bool(re.search(r"[A-ZÀ-Ü]", s))
 
 
 def sanear_matriz(matriz):
-    """
-    Remove linhas totalmente vazias e corta espaços.
-    Não força dimensões ainda.
-    """
     if not isinstance(matriz, list):
         return matriz
 
@@ -113,7 +126,6 @@ def sanear_matriz(matriz):
         if not isinstance(row, list):
             continue
         row2 = [str(c).upper().strip() for c in row]
-        # remove linha se todas as células forem "vazias"
         if any(_cell_ok(c) for c in row2):
             out.append(row2)
 
@@ -121,11 +133,6 @@ def sanear_matriz(matriz):
 
 
 def ajustar_dimensoes(matriz, linhas: int, colunas: int):
-    """
-    Ajuste conservador:
-    - se tiver linhas/colunas a mais: corta (com aviso)
-    - se tiver a menos: erro (não inventa letra)
-    """
     if not isinstance(matriz, list):
         raise ValueError("Matriz inválida: não é uma lista.")
 
@@ -193,7 +200,6 @@ def _prompt_extracao(linhas, colunas):
 
 
 def _prompt_correcao(linhas, colunas, matriz_ruim):
-    # pede para corrigir dimensões usando a própria matriz gerada
     return (
         "Corrija a matriz abaixo para ficar EXATAMENTE no tamanho pedido.\n"
         f"Tamanho obrigatório: {linhas} linhas x {colunas} colunas.\n"
@@ -216,27 +222,27 @@ def extrair_matriz_google(api_key: str, imagem: Image.Image, linhas: int, coluna
     model = genai.GenerativeModel(modelo_id)
 
     img_resized = imagem.copy()
-    img_resized.thumbnail((1400, 1400))
+    img_resized.thumbnail((1200, 1200))
 
     # 1) primeira tentativa
-    resp1 = model.generate_content([_prompt_extracao(linhas, colunas), img_resized], request_options={"timeout": 120})
-    j1 = extrair_json_estrito(resp1.text)
-    m1 = sanear_matriz(j1.get("matriz"))
+    prompt = _prompt_extracao(linhas, colunas)
+    response = model.generate_content([prompt, img_resized], request_options={"timeout": 120})
+    j = extrair_json_estrito(response.text)
 
-    # tenta ajustar já (pode resolver o “+1 linha vazia”)
+    matriz = sanear_matriz(j.get("matriz"))
+
+    # 2) se ainda estiver errado, pede correção (retry)
     try:
-        m_ok = ajustar_dimensoes(m1, linhas, colunas)
-        return modelo_id, m_ok, j1
+        matriz_ok = ajustar_dimensoes(matriz, linhas, colunas)
+        return modelo_id, {"matriz": matriz_ok}
     except Exception:
-        pass
-
-    # 2) retry: correção de dimensões usando a matriz retornada
-    resp2 = model.generate_content([_prompt_correcao(linhas, colunas, m1), img_resized], request_options={"timeout": 120})
-    j2 = extrair_json_estrito(resp2.text)
-    m2 = sanear_matriz(j2.get("matriz"))
-
-    m_ok = ajustar_dimensoes(m2, linhas, colunas)
-    return modelo_id, m_ok, j2
+        # retry usando a matriz atual como base
+        prompt2 = _prompt_correcao(linhas, colunas, matriz)
+        response2 = model.generate_content(prompt2, request_options={"timeout": 120})
+        j2 = extrair_json_estrito(response2.text)
+        matriz2 = sanear_matriz(j2.get("matriz"))
+        matriz_ok2 = ajustar_dimensoes(matriz2, linhas, colunas)
+        return modelo_id, {"matriz": matriz_ok2}
 
 
 # =========================================================
@@ -255,7 +261,8 @@ with col1:
     st.subheader("1) Envie a foto")
     uploaded_file = st.file_uploader("Selecione a imagem (.jpg, .png)", type=["jpg", "png", "jpeg"])
 
-    opcoes_tamanho = ["4x4", "5x5", "5x4", "6x4"]
+    # ✅ Inclui 5x6 e 6x5
+    opcoes_tamanho = ["4x4", "5x5", "5x4", "6x4", "5x6", "6x5"]
     tamanho_selecionado = st.selectbox("Tamanho do tabuleiro (Linhas x Colunas):", opcoes_tamanho, index=0)
 
     if uploaded_file:
@@ -265,43 +272,51 @@ with col1:
 with col2:
     st.subheader("2) Resultado")
 
-    if uploaded_file and st.button(f"Analisar tabuleiro {tamanho_selecionado}", use_container_width=True):
-        try:
-            linhas, colunas = map(int, tamanho_selecionado.split("x"))
+    if uploaded_file:
+        if st.button(f"Analisar tabuleiro {tamanho_selecionado}", use_container_width=True):
+            try:
+                linhas, colunas = map(int, tamanho_selecionado.split("x"))
 
-            with st.spinner("🔍 Extraindo a matriz com Gemini..."):
-                t0 = time.time()
-                modelo_usado, matriz, json_bruto = extrair_matriz_google(GOOGLE_API_KEY, imagem, linhas, colunas)
-                t1 = time.time()
+                with st.spinner("🔍 Extraindo a matriz com Gemini..."):
+                    t0 = time.time()
+                    modelo_usado, json_resposta = extrair_matriz_google(GOOGLE_API_KEY, imagem, linhas, colunas)
+                    matriz = json_resposta["matriz"]
+                    t1 = time.time()
 
-            st.success(f"Matriz {linhas}x{colunas} extraída em {t1 - t0:.1f}s.")
-            st.info(f"Modelo Gemini em uso: {modelo_usado}")
-            st.code(json.dumps(matriz, indent=2, ensure_ascii=False), language="json")
+                st.success(f"Matriz {linhas}x{colunas} extraída em {t1 - t0:.1f}s.")
+                st.info(f"Modelo Gemini em uso: {modelo_usado}")
+                st.code(json.dumps(matriz, indent=2, ensure_ascii=False), language="json")
 
-            with st.spinner("🧠 Buscando palavras no dicionário PT-BR..."):
-                t2 = time.time()
-                palavras_achadas = buscar_palavras_boggle(matriz, dicionario_pt, prefixos_pt)
-                t3 = time.time()
+                with st.spinner("🧠 Buscando palavras no dicionário PT-BR..."):
+                    t2 = time.time()
+                    palavras_achadas = buscar_palavras_boggle(matriz, dicionario_pt, prefixos_pt)
+                    t3 = time.time()
 
-            if not palavras_achadas:
-                st.warning("Nenhuma palavra encontrada com o dicionário atual.")
-            else:
-                palavras = sorted(palavras_achadas.keys(), key=len, reverse=True)
-                st.success(f"Encontrei {len(palavras)} palavras em {t3 - t2:.1f}s.")
+                # ✅ Só 4 letras pra frente
+                palavras_filtradas = {p: caminho for p, caminho in palavras_achadas.items() if len(p) >= 4}
 
-                df = pd.DataFrame({"Palavra": palavras})
-                st.dataframe(df, use_container_width=True, height=420)
+                if not palavras_filtradas:
+                    st.warning("Nenhuma palavra de 4+ letras encontrada com o dicionário atual.")
+                    st.stop()
 
-                csv = df.to_csv(index=False).encode("utf-8")
-                st.download_button(
-                    "Baixar palavras (CSV)",
-                    data=csv,
-                    file_name=f"palavras_{linhas}x{colunas}.csv",
-                    mime="text/csv",
-                    use_container_width=True,
+                # ordena por pontos, depois tamanho, depois alfabético
+                palavras = sorted(
+                    palavras_filtradas.keys(),
+                    key=lambda w: (pontos_boggle(len(w)), len(w), w),
+                    reverse=True
                 )
 
-        except Exception as e:
-            st.error(f"Ocorreu um erro inesperado: {e}")
-            st.text("Traceback (most recent call last):")
-            st.text(traceback.format_exc())
+                df = pd.DataFrame({
+                    "palavra": palavras,
+                    "tamanho": [len(w) for w in palavras],
+                    "pontos": [pontos_boggle(len(w)) for w in palavras],
+                })
+
+                st.success(f"Encontrei {len(palavras)} palavras (4+) em {t3 - t2:.1f}s.")
+                st.metric("Pontos totais", int(df["pontos"].sum()))
+                st.dataframe(df, use_container_width=True)
+
+            except Exception as e:
+                st.error(f"Erro: {e}")
+                st.text("Detalhes:")
+                st.text(traceback.format_exc())
