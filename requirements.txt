@@ -1,5 +1,5 @@
-streamlit
-pandas
-groq
-paddleocr
-paddlepaddle
+streamlit==1.35.0
+pandas==2.2.2
+groq==0.9.0
+paddleocr==2.7.3
+paddlepaddle==2.6.1
