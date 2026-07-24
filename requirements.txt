@@ -1,6 +1,5 @@
 streamlit
 pandas
-Pillow
 groq
 paddleocr
 paddlepaddle
