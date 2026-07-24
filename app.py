@@ -96,7 +96,8 @@ def extrair_matriz_google(api_key: str, imagem: Image.Image, linhas: int, coluna
         raise ValueError("A GOOGLE_API_KEY não foi configurada nos Secrets do Streamlit.")
     
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    # ===== MUDANÇA DEFINITIVA APLICADA AQUI =====
+    model = genai.GenerativeModel('gemini-pro-vision')
 
     prompt = (
         f"Analise a imagem de um tabuleiro do jogo Boggle. "
@@ -132,7 +133,6 @@ with col1:
         "Arraste ou selecione a imagem (.jpg, .png)", type=["jpg", "png", "jpeg"]
     )
     
-    # === MUDANÇA APLICADA AQUI ===
     opcoes_tamanho = ["4x4", "5x5", "5x4", "6x4"]
     tamanho_selecionado = st.selectbox(
         "Tamanho do tabuleiro (Linhas x Colunas):", opcoes_tamanho, index=0
@@ -149,7 +149,6 @@ with col2:
             placeholder_resultados = st.empty()
             with placeholder_resultados.container():
                 try:
-                    # Parse do tamanho selecionado
                     linhas, colunas = map(int, tamanho_selecionado.split('x'))
 
                     with st.spinner(f"🔍 Analisando a imagem com Google Gemini (esperando {linhas}x{colunas})..."):
@@ -173,13 +172,11 @@ with col2:
                             sorted(palavras_achadas.keys(), key=len, reverse=True),
                             columns=["Palavra"]
                         )
-                        df["Tamanho"] = df["Palavra"].str.len()
                         st.dataframe(df, use_container_width=True)
                     else:
-                        st.warning("Nenhuma palavra encontrada para esta combinação de letras.")
-
-                except ValueError as ve:
-                    st.error(f"Erro de Validação: {ve}")
-                    st.info("Dica: Verifique se o tamanho selecionado ({tamanho_selecionado}) corresponde ao tabuleiro na imagem e se a imagem está nítida.")
+                        st.warning("Nenhuma palavra encontrada para esta combinação.")
+                
+                except ValueError as e:
+                    st.error(f"⚠️ Erro de Validação: {e}\n\nVerifique se o tamanho selecionado ({tamanho_selecionado}) corresponde ao tabuleiro na imagem.")
                 except Exception as e:
                     st.error(f"Ocorreu um erro inesperado: {e}")
