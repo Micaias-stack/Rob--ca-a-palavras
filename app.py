@@ -2,7 +2,6 @@ import json
 import re
 import time
 import traceback
-import unicodedata
 import urllib.request
 from collections import Counter
 
@@ -12,7 +11,7 @@ from PIL import Image
 
 import google.generativeai as genai
 
-# opcional: “raridade” (se estiver instalado, ajuda a escolher a palavra-chave)
+# opcional (se instalado, melhora a escolha “rara” da palavra-chave)
 try:
     from wordfreq import zipf_frequency
     WORDFREQ_OK = True
@@ -29,43 +28,18 @@ st.caption("Upload da foto → Gemini extrai a grade → Python encontra palavra
 
 
 # =========================================================
-# REGRAS DO JOGO (UPGRADES)
+# REGRAS / UPGRADES PEDIDOS
 # =========================================================
-MIN_PALAVRA = 3                 # ✅ mínimo para encontrar palavras
-TAMANHOS_PERMITIDOS = {"4x4", "5x5", "6x6"}  # ✅ só 4x4, 5x5, 6x6
+TAMANHOS = {"4x4": 4, "5x5": 5, "6x6": 6}   # ✅ só 4/5/6
+MIN_PALAVRA = 3                             # ✅ mínimo 3 letras para encontrar palavras
 
-PONTOS_MAX_UNICA = 8            # cap da pontuação por tamanho (únicas)
-PONTOS_MAX_CHAVE = 8            # palavra-chave vale até 8 (fixo, editável no slider)
-PONTOS_REPETIDA = 1             # palavra repetida (2+ jogadores)
-
-
-# =========================================================
-# NORMALIZAÇÃO (mais robusto pra acento/ruído do OCR)
-# =========================================================
-def strip_accents(s: str) -> str:
-    s = s or ""
-    nfkd = unicodedata.normalize("NFKD", s)
-    return "".join(ch for ch in nfkd if not unicodedata.combining(ch))
-
-def canon_word(s: str) -> str:
-    """
-    Canônico:
-    - remove acentos
-    - upper
-    - fica só A-Z
-    """
-    s = strip_accents(s or "").upper().strip()
-    s = re.sub(r"[^A-Z]", "", s)
-    return s
-
-def zipf_pt_safe(word: str) -> float:
-    if not WORDFREQ_OK:
-        return 0.0
-    return float(zipf_frequency((word or "").lower(), "pt"))
+PONTOS_MAX_UNICA = 8                        # ✅ teto 8
+PONTOS_REPETIDA = 1                         # repetida (2+ jogadores)
+PONTOS_MAX_CHAVE = 8                        # palavra-chave até 8
 
 
 # =========================================================
-# DICIONÁRIO PT-BR (CACHE)
+# DICIONÁRIO PT-BR (CACHE) - mantém o “jeito que tava”
 # =========================================================
 @st.cache_data(ttl=21600)  # 6h
 def carregar_dicionario_pt():
@@ -77,21 +51,17 @@ def carregar_dicionario_pt():
     prefixos = set()
 
     for p in palavras_raw:
-        p = (p or "").strip()
-        if not p or "-" in p or "." in p:
-            continue
-
-        c = canon_word(p)
-        if len(c) >= 2:
-            dicionario.add(c)
-            for i in range(1, len(c) + 1):
-                prefixos.add(c[:i])
+        p = (p or "").upper().strip()
+        if len(p) >= 2 and "-" not in p and "." not in p:
+            dicionario.add(p)
+            for i in range(1, len(p) + 1):
+                prefixos.add(p[:i])
 
     return dicionario, prefixos
 
 
 # =========================================================
-# BOGGLE SOLVER (DFS)
+# BOGGLE SOLVER (DFS) - upgrade: mínimo 3 letras
 # =========================================================
 def buscar_palavras_boggle(matriz, dicionario, prefixos, min_palavra=MIN_PALAVRA):
     linhas = len(matriz)
@@ -105,7 +75,7 @@ def buscar_palavras_boggle(matriz, dicionario, prefixos, min_palavra=MIN_PALAVRA
     ]
 
     def dfs(r, c, visitados, palavra, caminho):
-        letra = canon_word(str(matriz[r][c]))
+        letra = str(matriz[r][c]).upper().strip()
         if not letra:
             return
 
@@ -146,9 +116,11 @@ def extrair_json_estrito(texto: str) -> dict:
         raise ValueError(f"JSON não encontrado na resposta do modelo.\nResposta (início): {t[:400]}")
     return json.loads(m.group(0))
 
+
 def _cell_ok(x: str) -> bool:
-    s = canon_word(x)
-    return len(s) >= 1
+    s = (x or "").strip().upper()
+    return bool(re.search(r"[A-ZÀ-Ü]", s))
+
 
 def sanear_matriz(matriz):
     """
@@ -167,6 +139,7 @@ def sanear_matriz(matriz):
             out.append(row2)
 
     return out
+
 
 def ajustar_dimensoes(matriz, linhas: int, colunas: int):
     """
@@ -199,7 +172,7 @@ def ajustar_dimensoes(matriz, linhas: int, colunas: int):
 
 
 # =========================================================
-# GEMINI: Seleção robusta de modelo
+# GEMINI: Seleção robusta de modelo (mantém como tava)
 # =========================================================
 def _escolher_modelo_generate_content():
     preferidos = [
@@ -227,6 +200,7 @@ def _escolher_modelo_generate_content():
 
     raise RuntimeError("Nenhum modelo com suporte a generateContent foi encontrado no seu projeto (v1beta).")
 
+
 def _prompt_extracao(linhas, colunas):
     return (
         f"Você receberá a imagem de um tabuleiro tipo Boggle com {linhas} linhas e {colunas} colunas.\n"
@@ -237,6 +211,7 @@ def _prompt_extracao(linhas, colunas):
         "- Retorne SOMENTE JSON válido, sem texto extra.\n"
         f"- Formato: {{\"matriz\": [[...], ...]}} com exatamente {linhas} linhas e {colunas} colunas.\n"
     )
+
 
 def _prompt_correcao(linhas, colunas, matriz_ruim):
     return (
@@ -250,9 +225,20 @@ def _prompt_correcao(linhas, colunas, matriz_ruim):
         f"MATRIZ_ATUAL:\n{json.dumps({'matriz': matriz_ruim}, ensure_ascii=False)}\n"
     )
 
-def extrair_matriz_google(api_key: str, imagem: Image.Image, linhas: int, colunas: int):
+
+def _get_api_key():
+    # ✅ “como tava”: pega do Streamlit secrets (sem input)
+    # aceita qualquer um dos dois nomes, pra não quebrar seu deploy
+    return (
+        st.secrets.get("GOOGLE_API_KEY", "")
+        or st.secrets.get("GEMINI_API_KEY", "")
+    )
+
+
+def extrair_matriz_google(imagem: Image.Image, linhas: int, colunas: int):
+    api_key = _get_api_key()
     if not api_key:
-        raise ValueError("A GOOGLE_API_KEY não foi configurada nos Secrets do Streamlit.")
+        raise ValueError('API Key não configurada nos Secrets. Use st.secrets["GOOGLE_API_KEY"] ou st.secrets["GEMINI_API_KEY"].')
 
     genai.configure(api_key=api_key)
 
@@ -263,7 +249,10 @@ def extrair_matriz_google(api_key: str, imagem: Image.Image, linhas: int, coluna
     img_resized.thumbnail((1400, 1400))
 
     # 1) primeira tentativa
-    resp1 = model.generate_content([_prompt_extracao(linhas, colunas), img_resized], request_options={"timeout": 120})
+    resp1 = model.generate_content(
+        [_prompt_extracao(linhas, colunas), img_resized],
+        request_options={"timeout": 120},
+    )
     j1 = extrair_json_estrito(resp1.text)
     m1 = sanear_matriz(j1.get("matriz"))
 
@@ -273,48 +262,59 @@ def extrair_matriz_google(api_key: str, imagem: Image.Image, linhas: int, coluna
     except Exception:
         pass
 
-    # 2) retry: correção de dimensões
-    resp2 = model.generate_content([_prompt_correcao(linhas, colunas, m1), img_resized], request_options={"timeout": 120})
+    # 2) retry: pede correção das dimensões
+    resp2 = model.generate_content(
+        [_prompt_correcao(linhas, colunas, m1), img_resized],
+        request_options={"timeout": 120},
+    )
     j2 = extrair_json_estrito(resp2.text)
     m2 = sanear_matriz(j2.get("matriz"))
+    m_ok2 = ajustar_dimensoes(m2, linhas, colunas)
 
-    m_ok = ajustar_dimensoes(m2, linhas, colunas)
-    return modelo_id, m_ok, j2
+    return modelo_id, m_ok2, j2
 
 
 # =========================================================
-# UPGRADE: PALAVRA-CHAVE AUTOMÁTICA (4x4/5x5/6x6)
+# UPGRADES: Palavra-chave + pontuação
 # =========================================================
+def _zipf_pt(word: str) -> float:
+    if not WORDFREQ_OK:
+        return 0.0
+    return float(zipf_frequency((word or "").lower(), "pt"))
+
+
 def min_len_chave_por_tabuleiro(n: int) -> int:
     return {4: 6, 5: 7, 6: 8}.get(n, 7)
 
-def sugerir_palavra_chave(palavras_canon: list[str], n_tabuleiro: int) -> str:
+
+def sugerir_palavra_chave(palavras: list[str], n_tabuleiro: int) -> str:
     """
-    Escolhe automaticamente:
-    - prioritiza as mais longas a partir do mínimo por tabuleiro
-    - desempate por raridade (se wordfreq existir)
+    Escolha simples e estável:
+    - tenta >= min_len por tabuleiro
+    - desempate: maior tamanho
+    - se wordfreq existir: mais rara (menor zipf)
     """
-    if not palavras_canon:
+    if not palavras:
         return ""
 
     min_len = min_len_chave_por_tabuleiro(n_tabuleiro)
-    cand = [w for w in palavras_canon if len(w) >= min_len]
-
+    cand = [w for w in palavras if len(w) >= min_len]
     if not cand:
-        maxlen = max(len(w) for w in palavras_canon)
-        cand = [w for w in palavras_canon if len(w) == maxlen]
+        maxlen = max(len(w) for w in palavras)
+        cand = [w for w in palavras if len(w) == maxlen]
 
-    def score(w: str) -> float:
-        raridade = -zipf_pt_safe(w)  # menor frequência => mais rara => score maior
-        return (len(w) * 100.0) + (raridade * 10.0)
+    if WORDFREQ_OK:
+        # menor zipf = mais rara
+        cand.sort(key=lambda w: (_zipf_pt(w), -len(w), w))
+        return cand[0]
 
-    return max(cand, key=score)
+    # sem wordfreq: pega a mais longa; desempate alfabético
+    cand.sort(key=lambda w: (-len(w), w))
+    return cand[0]
 
 
-# =========================================================
-# UPGRADE: PONTUAÇÃO (opcional, pra você colar palavras dos jogadores)
-# =========================================================
 def pontos_unica_por_tamanho(n: int) -> int:
+    # cap em 8 (do jeito que você pediu)
     if n <= 2: return 0
     if n == 3: return 2
     if n == 4: return 3
@@ -322,6 +322,155 @@ def pontos_unica_por_tamanho(n: int) -> int:
     if n == 6: return 6
     return PONTOS_MAX_UNICA  # 7+ => 8
 
-def pontuar_palavra(canon: str, qtd_jogadores_que_acharam: int, palavra_chave_canon: str, pontos_chave: int) -> int:
-    if palavra_chave_canon and canon == palavra_chave_canon:
-        return int(pontos_ch
+
+def pontuar_palavra(palavra: str, qtd_jogadores_que_acharam: int, palavra_chave: str, pontos_chave: int) -> int:
+    if palavra_chave and palavra == palavra_chave:
+        return int(pontos_chave)
+    if qtd_jogadores_que_acharam >= 2:
+        return PONTOS_REPETIDA
+    return pontos_unica_por_tamanho(len(palavra))
+
+
+def parse_lista_palavras(txt: str) -> list[str]:
+    # aceita separador por espaço, vírgula, quebra de linha
+    raw = re.split(r"[\s,;]+", (txt or "").upper().strip())
+    return [w for w in raw if w]
+
+
+# =========================================================
+# SIDEBAR (só 4x4/5x5/6x6)
+# =========================================================
+with st.sidebar:
+    st.subheader("Grade")
+    tamanho_label = st.selectbox("Tamanho do tabuleiro", list(TAMANHOS.keys()), index=2)
+    n = TAMANHOS[tamanho_label]
+    st.write(f"Mínimo de palavra: **{MIN_PALAVRA} letras**")
+
+    st.divider()
+    st.subheader("Pontuação (opcional)")
+    pontos_chave = st.slider("Pontos da palavra-chave", 0, PONTOS_MAX_CHAVE, PONTOS_MAX_CHAVE, 1)
+    qtd_jogadores = st.number_input("Qtd. jogadores", min_value=2, max_value=10, value=2, step=1)
+
+
+# =========================================================
+# MAIN: Upload + extração + solver
+# =========================================================
+colA, colB = st.columns([1.2, 1])
+
+with colA:
+    imagem_up = st.file_uploader("Envie a foto do tabuleiro", type=["png", "jpg", "jpeg", "webp"])
+
+    if imagem_up:
+        img = Image.open(imagem_up).convert("RGB")
+        st.image(img, caption="Imagem enviada", use_container_width=True)
+
+        if st.button("Extrair grade com Gemini", type="primary"):
+            t0 = time.time()
+            try:
+                modelo_id, matriz, raw_json = extrair_matriz_google(img, n, n)
+                st.session_state["matriz"] = matriz
+                st.session_state["modelo_id"] = modelo_id
+                st.session_state["raw_json"] = raw_json
+                st.success(f"Grade extraída em {time.time()-t0:.1f}s (modelo: {modelo_id}).")
+            except Exception as e:
+                st.error(str(e))
+                with st.expander("Detalhes do erro"):
+                    st.code(traceback.format_exc(), language="text")
+
+with colB:
+    matriz = st.session_state.get("matriz")
+    if matriz:
+        st.subheader("Grade reconhecida")
+        st.dataframe(pd.DataFrame(matriz), use_container_width=True)
+
+        with st.expander("JSON bruto retornado pelo modelo"):
+            st.json(st.session_state.get("raw_json", {}))
+
+
+# =========================================================
+# Solver + Palavra-chave + listagem
+# =========================================================
+matriz = st.session_state.get("matriz")
+if matriz:
+    dicionario, prefixos = carregar_dicionario_pt()
+
+    st.divider()
+    st.subheader("Palavras encontradas")
+
+    achadas = buscar_palavras_boggle(matriz, dicionario, prefixos, min_palavra=MIN_PALAVRA)
+    palavras = sorted(achadas.keys(), key=lambda w: (-len(w), w))
+
+    palavra_chave = sugerir_palavra_chave(palavras, n)
+
+    c1, c2, c3 = st.columns([1, 1, 2])
+    c1.metric("Total", len(palavras))
+    c2.metric("Palavra-chave", palavra_chave or "—")
+    c3.caption("Dica: se quiser uma palavra-chave mais “rara”, instale `wordfreq` no deploy.")
+
+    max_exibir = st.slider("Máximo para exibir", 50, 2000, 300, 50)
+    st.write(", ".join(palavras[:max_exibir]) if palavras else "Nenhuma palavra encontrada.")
+
+    # =========================================================
+    # Pontuação multi-jogadores (opcional)
+    # =========================================================
+    st.divider()
+    st.subheader("Pontuação (multi-jogadores)")
+
+    st.caption(
+        "Regras: palavra repetida (2+ jogadores) = 1 ponto; palavra única = por tamanho (cap 8); "
+        f"palavra-chave = {pontos_chave} pontos."
+    )
+
+    validas_set = set(palavras)
+    entradas = []
+    cols = st.columns(int(qtd_jogadores))
+    for i in range(int(qtd_jogadores)):
+        with cols[i]:
+            txt = st.text_area(f"Jogador {i+1} (cole as palavras)", height=140, key=f"jog_{i}")
+            lst = parse_lista_palavras(txt)
+            entradas.append(lst)
+
+    # valida e cria sets por jogador (somente palavras do solver)
+    sets_validas = []
+    invalidas_por_jogador = []
+    for lst in entradas:
+        validas = [w for w in lst if w in validas_set]
+        invalidas = [w for w in lst if w and w not in validas_set]
+        sets_validas.append(set(validas))
+        invalidas_por_jogador.append(sorted(set(invalidas)))
+
+    # contagem global: quantos jogadores acharam cada palavra
+    contagem = Counter()
+    for s in sets_validas:
+        contagem.update(s)
+
+    # calcula pontos por jogador
+    linhas_tabela = []
+    for idx, s in enumerate(sets_validas):
+        total = 0
+        detalhes = []
+        for w in sorted(s, key=lambda x: (-len(x), x)):
+            p = pontuar_palavra(w, contagem[w], palavra_chave, pontos_chave)
+            total += p
+            detalhes.append((w, p, contagem[w]))
+        linhas_tabela.append((idx + 1, total, detalhes))
+
+    # output
+    resumo = pd.DataFrame(
+        [{"Jogador": f"Jogador {j}", "Pontos": pts} for j, pts, _ in linhas_tabela]
+    ).sort_values("Pontos", ascending=False)
+
+    st.dataframe(resumo, use_container_width=True, hide_index=True)
+
+    with st.expander("Detalhamento por jogador"):
+        for j, pts, detalhes in linhas_tabela:
+            st.markdown(f"**Jogador {j} — {pts} pontos**")
+            if not detalhes:
+                st.write("—")
+            else:
+                df_det = pd.DataFrame(detalhes, columns=["Palavra", "Pontos", "Qtd. jogadores"])
+                st.dataframe(df_det, use_container_width=True, hide_index=True)
+
+    with st.expander("Palavras inválidas (não encontradas pelo robô)"):
+        for i, inv in enumerate(invalidas_por_jogador):
+            st.markdown(f"**Jogador {i+1}:** {', '.join(inv) if inv else '—'}")
