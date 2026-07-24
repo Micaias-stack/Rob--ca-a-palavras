@@ -4,6 +4,7 @@ import io
 import json
 import re
 import time
+import traceback
 import urllib.request
 
 import pandas as pd
@@ -73,10 +74,14 @@ def buscar_palavras_boggle(matriz, dicionario, prefixos):
 # UTILS: JSON & MATRIX
 # =========================================================
 def extrair_json_estrito(texto: str) -> dict:
-    match = re.search(r"\{[\s\S]*\}", (texto or "").strip())
+    # Adiciona busca por ```json ... ``` para maior robustez
+    match = re.search(r"```json\s*(\{[\s\S]*\})\s*```", (texto or "").strip())
+    if not match:
+        match = re.search(r"\{[\s\S]*\}", (texto or "").strip())
+    
     if not match:
         raise ValueError(f"Formato de resposta inválido. JSON não encontrado.\nRetorno: {texto[:500]}")
-    return json.loads(match.group(0))
+    return json.loads(match.group(1) if "```json" in match.group(0) else match.group(0))
 
 def normalizar_matriz(matriz, linhas: int, colunas: int):
     if not isinstance(matriz, list) or len(matriz) != linhas:
@@ -96,16 +101,15 @@ def extrair_matriz_google(api_key: str, imagem: Image.Image, linhas: int, coluna
         raise ValueError("A GOOGLE_API_KEY não foi configurada nos Secrets do Streamlit.")
     
     genai.configure(api_key=api_key)
-    # ===== CORREÇÃO APLICADA CONFORME SUA SUGESTÃO =====
-    model = genai.GenerativeModel('gemini-3.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash-latest') # O modelo mais recente costuma funcionar bem
 
     prompt = (
         f"Analise a imagem de um tabuleiro do jogo Boggle. "
         f"Extraia as letras e retorne uma matriz JSON com {linhas} linhas e {colunas} colunas. "
         "As letras devem ser lidas da esquerda para a direita, de cima para baixo. "
         "Algumas células podem conter mais de uma letra (ex: 'QU'). Mantenha-as juntas. "
-        "Não inclua NADA além do objeto JSON na sua resposta. "
-        f"O formato deve ser {{\"matriz\": [[...], ... ]}} com {linhas} listas internas, cada uma com {colunas} strings."
+        "Formate sua resposta APENAS como um objeto JSON. Não inclua texto ou explicações antes ou depois. "
+        f"O formato deve ser {{\"matriz\": [...]}} com {linhas} listas internas, cada uma com {colunas} strings."
     )
     
     img_resized = imagem.copy()
@@ -120,7 +124,6 @@ def extrair_matriz_google(api_key: str, imagem: Image.Image, linhas: int, coluna
 try:
     dicionario_pt, prefixos_pt = carregar_dicionario_pt()
     GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY")
-    GROQ_API_KEY = st.secrets.get("GROQ_API_KEY")
 except Exception as e:
     st.error(f"Erro na inicialização: {e}")
     st.stop()
@@ -148,6 +151,7 @@ with col2:
         if st.button(f"Analisar Tabuleiro {tamanho_selecionado}", use_container_width=True):
             placeholder_resultados = st.empty()
             with placeholder_resultados.container():
+                # ESTA É A PARTE QUE ESTAVA FALTANDO
                 try:
                     linhas, colunas = map(int, tamanho_selecionado.split('x'))
 
@@ -167,3 +171,17 @@ with col2:
 
                     if palavras_achadas:
                         st.success(f"Encontrei {len(palavras_achadas)} palavras em {end_time_dfs - start_time_dfs:.1f}s.")
+                        
+                        df = pd.DataFrame(
+                            sorted(palavras_achadas.keys(), key=len, reverse=True),
+                            columns=["Palavra"]
+                        )
+                        st.dataframe(df, use_container_width=True)
+                    else:
+                        st.warning("Nenhuma palavra foi encontrada com a matriz extraída.")
+
+                except ValueError as e:
+                    st.error(f"⚠️ Erro de Validação: {e}")
+                except Exception as e:
+                    st.error(f"🔴 Ocorreu um erro inesperado: {e}")
+                    st.code(traceback.format_exc())
