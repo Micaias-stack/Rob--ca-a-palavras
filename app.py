@@ -96,8 +96,8 @@ def extrair_matriz_google(api_key: str, imagem: Image.Image, linhas: int, coluna
         raise ValueError("A GOOGLE_API_KEY não foi configurada nos Secrets do Streamlit.")
     
     genai.configure(api_key=api_key)
-    # ===== MUDANÇA DEFINITIVA APLICADA AQUI =====
-    model = genai.GenerativeModel('gemini-pro-vision')
+    # ===== CORREÇÃO APLICADA CONFORME SUA SUGESTÃO =====
+    model = genai.GenerativeModel('gemini-3.5-flash')
 
     prompt = (
         f"Analise a imagem de um tabuleiro do jogo Boggle. "
@@ -167,16 +167,3 @@ with col2:
 
                     if palavras_achadas:
                         st.success(f"Encontrei {len(palavras_achadas)} palavras em {end_time_dfs - start_time_dfs:.1f}s.")
-                        
-                        df = pd.DataFrame(
-                            sorted(palavras_achadas.keys(), key=len, reverse=True),
-                            columns=["Palavra"]
-                        )
-                        st.dataframe(df, use_container_width=True)
-                    else:
-                        st.warning("Nenhuma palavra encontrada para esta combinação.")
-                
-                except ValueError as e:
-                    st.error(f"⚠️ Erro de Validação: {e}\n\nVerifique se o tamanho selecionado ({tamanho_selecionado}) corresponde ao tabuleiro na imagem.")
-                except Exception as e:
-                    st.error(f"Ocorreu um erro inesperado: {e}")
