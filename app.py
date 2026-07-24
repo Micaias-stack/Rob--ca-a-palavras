@@ -78,34 +78,33 @@ def extrair_json_estrito(texto: str) -> dict:
         raise ValueError(f"Formato de resposta inválido. JSON não encontrado.\nRetorno: {texto[:500]}")
     return json.loads(match.group(0))
 
-def normalizar_matriz(matriz, n):
-    if not isinstance(matriz, list) or len(matriz) != n:
-        raise ValueError(f"A matriz retornada pela IA é inválida (esperado {n} linhas).")
+def normalizar_matriz(matriz, linhas: int, colunas: int):
+    if not isinstance(matriz, list) or len(matriz) != linhas:
+        raise ValueError(f"A matriz retornada pela IA é inválida (esperado {linhas} linhas, mas vieram {len(matriz)}).")
     out = []
     for i, row in enumerate(matriz):
-        if not isinstance(row, list) or len(row) != n:
-            raise ValueError(f"A linha {i} da matriz é inválida (deveria ter {n} colunas).")
+        if not isinstance(row, list) or len(row) != colunas:
+            raise ValueError(f"A linha {i} da matriz é inválida (esperado {colunas} colunas, mas vieram {len(row)}).")
         out.append([str(x).upper().strip() for x in row])
     return out
 
 # =========================================================
 # GOOGLE GEMINI: Extrair matriz da imagem
 # =========================================================
-def extrair_matriz_google(api_key: str, imagem: Image.Image, n: int):
+def extrair_matriz_google(api_key: str, imagem: Image.Image, linhas: int, colunas: int):
     if not api_key:
         raise ValueError("A GOOGLE_API_KEY não foi configurada nos Secrets do Streamlit.")
     
     genai.configure(api_key=api_key)
-    # CORREÇÃO APLICADA AQUI CONFORME SUA SUGESTÃO
-    model = genai.GenerativeModel('gemini-3.5-flash')
+    model = genai.GenerativeModel('gemini-1.5-flash')
 
     prompt = (
         f"Analise a imagem de um tabuleiro do jogo Boggle. "
-        f"Extraia as letras e retorne uma matriz {n}x{n} em formato JSON. "
+        f"Extraia as letras e retorne uma matriz JSON com {linhas} linhas e {colunas} colunas. "
         "As letras devem ser lidas da esquerda para a direita, de cima para baixo. "
-        "Algumas células podem conter mais de uma letra (ex: 'QU', 'CH'). Mantenha-as juntas. "
+        "Algumas células podem conter mais de uma letra (ex: 'QU'). Mantenha-as juntas. "
         "Não inclua NADA além do objeto JSON na sua resposta. "
-        f"Exemplo para um tabuleiro 4x4: {{\"matriz\":[[\"A\",\"B\",\"C\",\"D\"],[\"E\",\"F\",\"G\",\"H\"],[\"I\",\"J\",\"K\",\"L\"],[\"M\",\"N\",\"O\",\"P\"]]}}"
+        f"O formato deve ser {{\"matriz\": [[...], ... ]}} com {linhas} listas internas, cada uma com {colunas} strings."
     )
     
     img_resized = imagem.copy()
@@ -132,7 +131,12 @@ with col1:
     uploaded_file = st.file_uploader(
         "Arraste ou selecione a imagem (.jpg, .png)", type=["jpg", "png", "jpeg"]
     )
-    tamanho_n = st.selectbox("Tamanho do tabuleiro:", [4, 5], index=0)
+    
+    # === MUDANÇA APLICADA AQUI ===
+    opcoes_tamanho = ["4x4", "5x5", "5x4", "6x4"]
+    tamanho_selecionado = st.selectbox(
+        "Tamanho do tabuleiro (Linhas x Colunas):", opcoes_tamanho, index=0
+    )
     
     if uploaded_file:
         imagem = Image.open(uploaded_file)
@@ -141,16 +145,20 @@ with col1:
 with col2:
     st.subheader("2. Resultado")
     if uploaded_file:
-        if st.button(f"Analisar Tabuleiro {tamanho_n}x{tamanho_n}", use_container_width=True):
+        if st.button(f"Analisar Tabuleiro {tamanho_selecionado}", use_container_width=True):
             placeholder_resultados = st.empty()
             with placeholder_resultados.container():
                 try:
-                    with st.spinner("🔍 Analisando a imagem com Google Gemini..."):
+                    # Parse do tamanho selecionado
+                    linhas, colunas = map(int, tamanho_selecionado.split('x'))
+
+                    with st.spinner(f"🔍 Analisando a imagem com Google Gemini (esperando {linhas}x{colunas})..."):
                         start_time = time.time()
-                        json_resposta = extrair_matriz_google(GOOGLE_API_KEY, imagem, tamanho_n)
-                        matriz = normalizar_matriz(json_resposta.get("matriz"), tamanho_n)
+                        json_resposta = extrair_matriz_google(GOOGLE_API_KEY, imagem, linhas, colunas)
+                        matriz = normalizar_matriz(json_resposta.get("matriz"), linhas, colunas)
                         end_time_ia = time.time()
-                    st.success(f"Matriz {tamanho_n}x{tamanho_n} extraída em {end_time_ia - start_time:.1f}s.")
+                    
+                    st.success(f"Matriz {linhas}x{colunas} extraída em {end_time_ia - start_time:.1f}s.")
                     st.code(json.dumps(matriz, indent=2, ensure_ascii=False), language="json")
 
                     with st.spinner("🧠 Procurando palavras no dicionário..."):
@@ -168,7 +176,10 @@ with col2:
                         df["Tamanho"] = df["Palavra"].str.len()
                         st.dataframe(df, use_container_width=True)
                     else:
-                        st.warning("Nenhuma palavra encontrada para este tabuleiro.")
+                        st.warning("Nenhuma palavra encontrada para esta combinação de letras.")
 
+                except ValueError as ve:
+                    st.error(f"Erro de Validação: {ve}")
+                    st.info("Dica: Verifique se o tamanho selecionado ({tamanho_selecionado}) corresponde ao tabuleiro na imagem e se a imagem está nítida.")
                 except Exception as e:
-                    st.error(f"Ocorreu um erro: {e}")
+                    st.error(f"Ocorreu um erro inesperado: {e}")
